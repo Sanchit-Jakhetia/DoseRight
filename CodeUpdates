@@ -1,0 +1,544 @@
+#include <WiFi.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Firebase_ESP_Client.h>
+#include <AccelStepper.h>
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
+
+#define API_KEY "AIzaSyBZJainRZeKZnTOQNYT5PLTIRbrJyiCgj4"
+#define DATABASE_URL "https://dose-right-default-rtdb.firebaseio.com"
+#define USER_EMAIL "sanchitjakhetia@gmail.com"
+#define USER_PASSWORD "Jakhetia@123"
+
+const char* WIFI_SSID = "Sanchit";
+const char* WIFI_PASS = "@Jakhetiaa";
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+#define MOTOR_IN1 13
+#define MOTOR_IN2 14
+#define MOTOR_IN3 27
+#define MOTOR_IN4 26
+AccelStepper stepper(AccelStepper::FULL4WIRE, MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, MOTOR_IN4);
+
+#define BTN_BACK 4
+#define BTN_DOWN 18
+#define BTN_UP 19
+#define BTN_SELECT 23
+#define BTN_MANUAL 25
+#define BUZZER 33
+#define IR_SENSOR 35
+
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+FirebaseJson json;
+
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 19800;
+const int daylightOffset_sec = 0;
+
+enum Screen {
+    HOME_SCREEN,
+    UPCOMING_SCREEN,
+    PAST_SCREEN,
+    SETTINGS_SCREEN
+};
+
+Screen currentScreen = HOME_SCREEN;
+
+struct Medicine {
+    String name;
+    String time;
+    String status;
+    int stock;
+};
+
+std::vector<Medicine> medicinesToday;
+int menuIndex = 0;
+
+String userId = "user001"; // Store the user ID here
+
+
+// Function prototypes
+void setupWiFi();
+void syncTime();
+void setupFirebase();
+Medicine extractMedicineFromJson(FirebaseJson& medicineJson);
+int timeToMinutes(String timeStr);
+bool compareMedicines(const Medicine &a, const Medicine &b);
+void loadMedicineSchedules();
+void updateDeviceStatus(const String& status);
+void displayHomeScreen();
+void checkForDispense();
+void manualRotate();
+void displayMenu();
+void displayUpcomingMeds();
+void displayPastMeds();
+void displaySettingsScreen();
+void checkButtons();
+void rotateToNextCompartment();
+
+void setupWiFi() {
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.print(".");
+    }
+    Serial.println("✅ Connected to WiFi!");
+}
+
+void syncTime() {
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    for (int i = 0; i < 10; ++i) {
+        struct tm timeinfo;
+        if (getLocalTime(&timeinfo)) {
+            Serial.println("✅ Time synced successfully!");
+            return;
+        }
+        Serial.println("⏳ Retrying NTP sync...");
+        delay(2000);
+    }
+    Serial.println("❌ Failed to obtain time.");
+}
+
+void setupFirebase() {
+    config.api_key = API_KEY;
+    config.database_url = DATABASE_URL;
+    auth.user.email = USER_EMAIL;
+    auth.user.password = USER_PASSWORD;
+
+    Firebase.begin(&config, &auth);
+    Firebase.reconnectWiFi(true);
+}
+
+Medicine extractMedicineFromJson(FirebaseJson& medicineJson) {
+    FirebaseJsonData timeData, medicineData, statusData, stockData;
+    Medicine med;
+
+    if (medicineJson.get(timeData, "times/0")) med.time = timeData.stringValue; // Access the first time in the array
+    if (medicineJson.get(medicineData, "name")) med.name = medicineData.stringValue;
+    //if (medicineJson.get(statusData, "status")) med.status = statusData.stringValue; // Status is in logs, not medicines
+    if (medicineJson.get(stockData, "refill/pillsLeft")) med.stock = stockData.intValue;
+
+    return med;
+}
+
+// Function to convert time string to minutes since midnight
+int timeToMinutes(String timeStr) {
+    int hour = timeStr.substring(0, timeStr.indexOf(":")).toInt();
+    int minute = timeStr.substring(timeStr.indexOf(":") + 1).toInt(); // Removed the space assumption
+    return hour * 60 + minute;
+}
+
+// Custom sorting function to sort medicines by time
+bool compareMedicines(const Medicine &a, const Medicine &b) {
+    return timeToMinutes(a.time) < timeToMinutes(b.time);
+}
+
+void loadMedicineSchedules() {
+    medicinesToday.clear();
+    String userId = "user001";
+    String medicinesTodayPath = "/users/" + userId + "/medicines";
+
+    if (Firebase.RTDB.getJSON(&fbdo, medicinesTodayPath)) {
+        FirebaseJson json = fbdo.jsonObject();
+        size_t len = json.iteratorBegin();
+
+        for (size_t i = 0; i < len; i++) {
+            int type;
+            String key, value;
+            json.iteratorGet(i, type, key, value);
+
+            FirebaseJsonData jsonData;
+            json.get(jsonData, key);
+            if (!jsonData.success) continue;
+
+            FirebaseJson medicineJson;
+            medicineJson.setJsonData(jsonData.stringValue);
+            Medicine med = extractMedicineFromJson(medicineJson, medicineJson);
+
+            // Get status from logs for today
+            String today = "";
+            time_t now = time(nullptr);
+            struct tm tstruct;
+            tstruct = *localtime(&now);
+            char buf[11];
+            strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
+            today = String(buf);
+
+            String logPath = "/users/" + userId + "/logs/" + today + "/" + key + "/status";
+            if (Firebase.RTDB.getString(&fbdo, logPath)) {
+                med.status = fbdo.stringData();
+            } else {
+                med.status = "Pending";
+            }
+
+            medicinesToday.push_back(med);
+
+            Serial.print("Medicine Added: ");
+            Serial.print(med.name);
+            Serial.print(" Time: ");
+            Serial.println(med.time);
+        }
+        json.iteratorEnd();
+
+        // Sort the medicines by time
+        std::sort(medicinesToday.begin(), medicinesToday.end(), compareMedicines);
+    } else {
+        Serial.print("Failed to get medicinesToday: ");
+        Serial.println(fbdo.errorReason());
+    }
+}
+Medicine extractMedicineFromJson(FirebaseJson& medicineJson, FirebaseJson& json) {
+    FirebaseJsonData timeData, medicineData, refillData;
+    Medicine med;
+
+    // Get medicine name
+    if (medicineJson.get(medicineData, "name")) {
+        med.name = medicineData.stringValue;
+    } else {
+        med.name = "N/A";
+    }
+
+    // Get time from the times array (assuming you want the first time)
+    if (medicineJson.get(timeData, "times")) {
+      FirebaseJsonArray times;
+      timeData.get<FirebaseJsonArray>(times); // Corrected line
+
+      for (int j = 0; j < times.size(); j++) {
+
+        times.get(timeData, j);
+        med.time = timeData.stringValue;
+    }
+    }else {
+        med.time = "N/A";
+    }
+      FirebaseJsonData pillsLeftData;
+    if (medicineJson.get(pillsLeftData, "dose")) {
+        med.stock = pillsLeftData.intValue;
+    } else {
+        med.stock = 0;  // Or some other default value
+    }
+
+    return med;
+}
+
+void updateDeviceStatus(const String& status) {
+    Firebase.RTDB.setString(&fbdo, "/device/status", status);
+}
+
+void displayHomeScreen() {
+    lcd.clear();
+
+    String title = "DoseRight";
+    int titleLen = title.length();
+    int padding = (20 - titleLen) / 2;
+    lcd.setCursor(padding, 0);
+    lcd.print(title);
+
+    lcd.setCursor(0, 1);
+    lcd.print("WiFi: ");
+    lcd.print(WiFi.status() == WL_CONNECTED ? "Y" : "N");
+
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+        char timeStr[6];
+        strftime(timeStr, sizeof(timeStr), "%H:%M", &timeinfo);
+        String timeDisplay = String(timeStr);
+        int timeLen = timeDisplay.length();
+        lcd.setCursor(20 - timeLen, 1);
+        lcd.print(timeDisplay);
+    } else {
+        lcd.setCursor(15, 1);
+        lcd.print("--:--");
+    }
+
+    lcd.setCursor(0, 2);
+    lcd.print("Next: ");
+    if (!medicinesToday.empty()) {
+        lcd.print(medicinesToday[0].name);
+    } else {
+        lcd.print("None");
+    }
+
+    lcd.setCursor(0, 3);
+    if (!medicinesToday.empty()) {
+        lcd.print("Dose: ");
+        lcd.print(medicinesToday[0].stock);
+        String timeDisplay = medicinesToday[0].time;
+        int timeLen = timeDisplay.length();
+        lcd.setCursor(20 - timeLen, 3);
+        lcd.print(timeDisplay);
+    } else {
+        lcd.print("No meds scheduled");
+    }
+}
+
+void checkForDispense() {
+   struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) return;
+
+    char currentTime[6];
+    strftime(currentTime, sizeof(currentTime), "%H:%M", &timeinfo);
+
+    for (Medicine& med : medicinesToday) {
+        String formattedTime = med.time;
+        int hour = 0;
+        int minute = 0;
+
+        int colonIndex = formattedTime.indexOf(":");
+        if (colonIndex > 0) {
+            hour = formattedTime.substring(0, colonIndex).toInt();
+            minute = formattedTime.substring(colonIndex + 1).toInt();
+        }
+
+        int currentHour = timeinfo.tm_hour;
+        int currentMinute = timeinfo.tm_min;
+
+        if (currentHour == hour && currentMinute == minute && med.status == "Pending") {
+            Serial.print("Dispensing: ");
+            Serial.println(med.name);
+
+            // Buzz the buzzer
+            tone(BUZZER, 1000, 500); // Frequency 1000 Hz for 0.5 seconds
+            delay(500); // Keep buzzing for 0.5 seconds
+            noTone(BUZZER); // Stop the buzzer
+
+            for (int b = 0; b < 6; b++) {
+                lcd.noBacklight();
+                delay(250);
+                lcd.backlight();
+                delay(250);
+            }
+
+            const int stepsPerCompartment = 2048 / 5;
+            static int ctr = 0;
+            stepper.move(stepsPerCompartment);
+            stepper.runToPosition();
+            ctr++;
+            Serial.println("💊 Dispensed. Waiting for hand or timeout...");
+
+            unsigned long start = millis();
+            while (millis() - start < 45000) {
+                if (digitalRead(IR_SENSOR) == LOW) {
+                    Serial.println("✋ Hand detected...");
+                    while (digitalRead(IR_SENSOR) == LOW) delay(200);
+                    Serial.println("👋 Hand removed.");
+                    break;
+                }
+                delay(200);
+            }
+
+            Serial.println("🔁 Returning to default.");
+            stepper.move(-stepsPerCompartment * ctr);
+            stepper.runToPosition();
+            ctr = 0;
+        }
+    }
+}
+
+void manualRotate() {
+    static unsigned long lastPressTime = 0;
+    static int pressCount = 0;
+    static int totalSteps = 0;
+    unsigned long currentTime = millis();
+    const int stepsPerCompartment = 2048 / 5;
+    const int returnDelay = 5000;
+
+    if (digitalRead(BTN_MANUAL) == LOW && (currentTime - lastPressTime > 200)) {
+        lastPressTime = currentTime;
+        pressCount++;
+        totalSteps += stepsPerCompartment;
+        Serial.print("Manual Rotate: ");
+        Serial.print(pressCount);
+        Serial.print(" Press(es), Total Steps: ");
+        Serial.println(totalSteps);
+
+        stepper.move(stepsPerCompartment);
+        stepper.runToPosition();
+
+        // Clear any existing timer
+        stepper.disableOutputs();
+
+        // Set timer to return to original position after 5 seconds
+        if (pressCount == 1) {
+            delay(returnDelay);
+            Serial.println("Returning to original position...");
+            stepper.move(-totalSteps);
+            stepper.runToPosition();
+            totalSteps = 0;
+            pressCount = 0;
+        }
+    }
+}
+
+void displayMenu() {
+    lcd.clear();
+    lcd.setCursor(6, 0); lcd.print("Main Menu");
+    lcd.setCursor(0, 1); lcd.print(menuIndex == 0 ? "> Upcoming Meds" : "  Upcoming Meds");
+    lcd.setCursor(0, 2); lcd.print(menuIndex == 1 ? "> Past Meds" : "  Past Meds");
+    lcd.setCursor(0, 3); lcd.print(menuIndex == 2 ? "> Settings" : "  Settings");
+}
+
+void displayUpcomingMeds() {
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("Upcoming Meds:");
+    if (medicinesToday.size() > 0) {
+        for (int i = 0; i < medicinesToday.size(); i++) {
+            lcd.setCursor(0, i + 1);
+            lcd.print(medicinesToday[i].name + " - " + medicinesToday[i].time);
+        }
+    } else {
+        lcd.setCursor(0, 1); lcd.print("No meds scheduled");
+    }
+    delay(2000);
+    displayHomeScreen();
+}
+
+void displayPastMeds() {
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("Past Meds:");
+    lcd.setCursor(0, 1); lcd.print("Not Implemented");
+    delay(2000);
+    displayHomeScreen();
+}
+
+void displaySettingsScreen() {
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("Settings:");
+    lcd.setCursor(0, 1); lcd.print("> Calibrate Motor");
+    while (true) {
+        int stepsPerDegree = 2048 / 360;
+        if (digitalRead(BTN_MANUAL) == LOW) {
+            stepper.move(stepsPerDegree);
+            stepper.runToPosition();
+            delay(200);
+        }
+        if (digitalRead(BTN_BACK) == LOW) {
+            delay(300);
+            displayHomeScreen();
+            return;
+        }
+    }
+}
+
+void checkButtons() {
+    static bool isInMenu = false;
+
+    if (digitalRead(BTN_SELECT) == LOW) {
+        delay(300);
+        if (!isInMenu) {
+            isInMenu = true;
+            displayMenu();
+        } else {
+            isInMenu = false;
+            if (menuIndex == 0) {
+                displayUpcomingMeds();
+            } else if (menuIndex == 1) {
+                displayPastMeds();
+            } else if (menuIndex == 2) {
+                displaySettingsScreen();
+            }
+        }
+    }
+
+    if (isInMenu) {
+        if (digitalRead(BTN_DOWN) == LOW) {
+            menuIndex = (menuIndex + 1) % 3;
+            displayMenu();
+            delay(300);
+        }
+        if (digitalRead(BTN_UP) == LOW) {
+            menuIndex = (menuIndex - 1 + 3) % 3;
+            displayMenu();
+            delay(300);
+        }
+        if (digitalRead(BTN_BACK) == LOW) {
+            isInMenu = false;
+            displayHomeScreen();
+            delay(300);
+        }
+    }
+}
+
+
+void rotateToNextCompartment() {
+    const int stepsPerCompartment = 2048 / 5;  // 360° / 5 compartments = 72°
+    static int ctr = 0;  // Keeps track of compartments moved
+    
+    // Move forward if the button (pin 25) is pressed
+    if (digitalRead(25) == LOW) {
+        stepper.move(stepsPerCompartment);
+        stepper.runToPosition();
+        ctr++;
+    }
+
+    // Wait for object removal if detected
+    if (digitalRead(IR_SENSOR) == LOW) {  
+        Serial.println("Object detected, waiting...");
+
+        // Wait until object is removed
+        while (digitalRead(IR_SENSOR) == LOW) {
+            delay(500);
+        }
+
+        Serial.println("Object removed, returning to initial position.");
+        
+        // Move back to original position
+        stepper.move(-stepsPerCompartment * ctr);
+        stepper.runToPosition();
+
+        // Reset counter after returning to the start
+        ctr = 0;
+    }
+}
+void setup() {
+    Serial.begin(115200);
+    setupWiFi();
+    syncTime();
+    setupFirebase();
+    loadMedicineSchedules();
+
+    pinMode(BUZZER, OUTPUT);
+    pinMode(IR_SENSOR, INPUT_PULLUP);
+    pinMode(BTN_BACK, INPUT_PULLUP);
+    pinMode(BTN_DOWN, INPUT_PULLUP);
+    pinMode(BTN_UP, INPUT_PULLUP);
+    pinMode(BTN_SELECT, INPUT_PULLUP);
+    pinMode(BTN_MANUAL, INPUT_PULLUP);
+
+    lcd.init();
+    lcd.backlight();
+    stepper.setMaxSpeed(1000);
+    stepper.setAcceleration(500);
+
+    updateDeviceStatus("Device connected");
+    displayHomeScreen();
+}
+unsigned long lastUpdate = 0;
+const unsigned long updateInterval = 60000;
+
+void loop() {
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        syncTime();
+        return;
+    }
+
+    checkButtons();
+    checkForDispense();
+
+    unsigned long now = millis();
+    if (now - lastUpdate >= updateInterval) {
+        updateDeviceStatus("Device connected");
+        loadMedicineSchedules();
+        displayHomeScreen();
+        lastUpdate = now;
+    }
+
+    checkButtons();
+    rotateToNextCompartment();
+    delay(500);
+}
