@@ -136,10 +136,54 @@ int timeToMinutes(String timeStr) {
 bool compareMedicines(const Medicine &a, const Medicine &b) {
     return timeToMinutes(a.time) < timeToMinutes(b.time);
 }
+std::vector<Medicine> extractMedicinesFromJson(FirebaseJson& medicineJson, const String& medKey) {
+    std::vector<Medicine> result;
+    FirebaseJsonData nameData, doseData, timesData;
+
+    if (!medicineJson.get(nameData, "name") || !medicineJson.get(timesData, "times")) {
+        return result;
+    }
+
+    FirebaseJsonArray timesArray;
+    timesData.get<FirebaseJsonArray>(timesArray);
+
+    for (size_t i = 0; i < timesArray.size(); i++) {
+        Medicine med;
+        FirebaseJsonData timeData;
+        timesArray.get(timeData, i);
+
+        med.name = nameData.stringValue;
+        med.time = timeData.stringValue;
+
+        if (medicineJson.get(doseData, "dose")) {
+            med.stock = doseData.intValue;
+        } else {
+            med.stock = 0;
+        }
+
+        // Get today's log status for this time
+        time_t now = time(nullptr);
+        struct tm tstruct;
+        tstruct = *localtime(&now);
+        char buf[11];
+        strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
+        String today = String(buf);
+
+        String logPath = "/users/" + userId + "/logs/" + today + "/" + medKey + "/" + med.time + "/status";
+        if (Firebase.RTDB.getString(&fbdo, logPath)) {
+            med.status = fbdo.stringData();
+        } else {
+            med.status = "Pending";
+        }
+
+        result.push_back(med);
+    }
+
+    return result;
+}
 
 void loadMedicineSchedules() {
     medicinesToday.clear();
-    String userId = "user001";
     String medicinesTodayPath = "/users/" + userId + "/medicines";
 
     if (Firebase.RTDB.getJSON(&fbdo, medicinesTodayPath)) {
@@ -157,73 +201,28 @@ void loadMedicineSchedules() {
 
             FirebaseJson medicineJson;
             medicineJson.setJsonData(jsonData.stringValue);
-            Medicine med = extractMedicineFromJson(medicineJson, medicineJson);
-
-            // Get status from logs for today
-            String today = "";
-            time_t now = time(nullptr);
-            struct tm tstruct;
-            tstruct = *localtime(&now);
-            char buf[11];
-            strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
-            today = String(buf);
-
-            String logPath = "/users/" + userId + "/logs/" + today + "/" + key + "/status";
-            if (Firebase.RTDB.getString(&fbdo, logPath)) {
-                med.status = fbdo.stringData();
-            } else {
-                med.status = "Pending";
+            std::vector<Medicine> meds = extractMedicinesFromJson(medicineJson, key);
+            
+            for (auto& m : meds) {
+                medicinesToday.push_back(m);
+                Serial.print("Added: ");
+                Serial.print(m.name);
+                Serial.print(" at ");
+                Serial.println(m.time);
             }
-
-            medicinesToday.push_back(med);
-
-            Serial.print("Medicine Added: ");
-            Serial.print(med.name);
-            Serial.print(" Time: ");
-            Serial.println(med.time);
         }
+
         json.iteratorEnd();
 
-        // Sort the medicines by time
+        // Sort by time
         std::sort(medicinesToday.begin(), medicinesToday.end(), compareMedicines);
     } else {
         Serial.print("Failed to get medicinesToday: ");
         Serial.println(fbdo.errorReason());
     }
 }
-Medicine extractMedicineFromJson(FirebaseJson& medicineJson, FirebaseJson& json) {
-    FirebaseJsonData timeData, medicineData, refillData;
-    Medicine med;
 
-    // Get medicine name
-    if (medicineJson.get(medicineData, "name")) {
-        med.name = medicineData.stringValue;
-    } else {
-        med.name = "N/A";
-    }
 
-    // Get time from the times array (assuming you want the first time)
-    if (medicineJson.get(timeData, "times")) {
-      FirebaseJsonArray times;
-      timeData.get<FirebaseJsonArray>(times); // Corrected line
-
-      for (int j = 0; j < times.size(); j++) {
-
-        times.get(timeData, j);
-        med.time = timeData.stringValue;
-    }
-    }else {
-        med.time = "N/A";
-    }
-      FirebaseJsonData pillsLeftData;
-    if (medicineJson.get(pillsLeftData, "dose")) {
-        med.stock = pillsLeftData.intValue;
-    } else {
-        med.stock = 0;  // Or some other default value
-    }
-
-    return med;
-}
 
 void updateDeviceStatus(const String& status) {
     Firebase.RTDB.setString(&fbdo, "/device/status", status);
@@ -243,31 +242,42 @@ void displayHomeScreen() {
     lcd.print(WiFi.status() == WL_CONNECTED ? "Y" : "N");
 
     struct tm timeinfo;
+    String currentTimeStr = "--:--";
     if (getLocalTime(&timeinfo)) {
         char timeStr[6];
         strftime(timeStr, sizeof(timeStr), "%H:%M", &timeinfo);
-        String timeDisplay = String(timeStr);
-        int timeLen = timeDisplay.length();
+        currentTimeStr = String(timeStr);
+        int timeLen = currentTimeStr.length();
         lcd.setCursor(20 - timeLen, 1);
-        lcd.print(timeDisplay);
+        lcd.print(currentTimeStr);
     } else {
         lcd.setCursor(15, 1);
-        lcd.print("--:--");
+        lcd.print(currentTimeStr);
+    }
+
+    // Find the next medicine that hasn't passed yet
+    int currentMinutes = timeToMinutes(currentTimeStr);
+    Medicine* nextMed = nullptr;
+    for (Medicine& med : medicinesToday) {
+        if (timeToMinutes(med.time) > currentMinutes && med.status == "Pending") {
+            nextMed = &med;
+            break;
+        }
     }
 
     lcd.setCursor(0, 2);
     lcd.print("Next: ");
-    if (!medicinesToday.empty()) {
-        lcd.print(medicinesToday[0].name);
+    if (nextMed) {
+        lcd.print(nextMed->name);
     } else {
         lcd.print("None");
     }
 
     lcd.setCursor(0, 3);
-    if (!medicinesToday.empty()) {
+    if (nextMed) {
         lcd.print("Dose: ");
-        lcd.print(medicinesToday[0].stock);
-        String timeDisplay = medicinesToday[0].time;
+        lcd.print(nextMed->stock);
+        String timeDisplay = nextMed->time;
         int timeLen = timeDisplay.length();
         lcd.setCursor(20 - timeLen, 3);
         lcd.print(timeDisplay);
@@ -276,8 +286,9 @@ void displayHomeScreen() {
     }
 }
 
+
 void checkForDispense() {
-   struct tm timeinfo;
+    struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) return;
 
     char currentTime[6];
@@ -300,41 +311,7 @@ void checkForDispense() {
         if (currentHour == hour && currentMinute == minute && med.status == "Pending") {
             Serial.print("Dispensing: ");
             Serial.println(med.name);
-
-            // Buzz the buzzer
-            tone(BUZZER, 1000, 500); // Frequency 1000 Hz for 0.5 seconds
-            delay(500); // Keep buzzing for 0.5 seconds
-            noTone(BUZZER); // Stop the buzzer
-
-            for (int b = 0; b < 6; b++) {
-                lcd.noBacklight();
-                delay(250);
-                lcd.backlight();
-                delay(250);
-            }
-
-            const int stepsPerCompartment = 2048 / 5;
-            static int ctr = 0;
-            stepper.move(stepsPerCompartment);
-            stepper.runToPosition();
-            ctr++;
-            Serial.println("💊 Dispensed. Waiting for hand or timeout...");
-
-            unsigned long start = millis();
-            while (millis() - start < 45000) {
-                if (digitalRead(IR_SENSOR) == LOW) {
-                    Serial.println("✋ Hand detected...");
-                    while (digitalRead(IR_SENSOR) == LOW) delay(200);
-                    Serial.println("👋 Hand removed.");
-                    break;
-                }
-                delay(200);
-            }
-
-            Serial.println("🔁 Returning to default.");
-            stepper.move(-stepsPerCompartment * ctr);
-            stepper.runToPosition();
-            ctr = 0;
+            showAlertScreen(med);
         }
     }
 }
@@ -393,7 +370,7 @@ void displayUpcomingMeds() {
     } else {
         lcd.setCursor(0, 1); lcd.print("No meds scheduled");
     }
-    delay(2000);
+    delay(10000);
     displayHomeScreen();
 }
 
@@ -463,6 +440,56 @@ void checkButtons() {
     }
 }
 
+void showAlertScreen(Medicine& med) {
+  // Add beeping alert before showing LCD alert
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(BUZZER, HIGH);
+    delay(300);
+    digitalWrite(BUZZER, LOW);
+    delay(300);
+  }
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Alert: Med Time!");
+  lcd.setCursor(0, 1);
+  lcd.print("Med: " + med.name);
+  lcd.setCursor(0, 2);
+  lcd.print("Time: " + med.time);
+  lcd.setCursor(0, 3);
+  lcd.print("Press SELECT");
+
+  while (digitalRead(BTN_SELECT) == HIGH) {
+    delay(100); // Wait for button press
+  }
+  delay(300); // Debounce
+
+  // Dispense the medicine (rotate the motor)
+  const int stepsPerCompartment = 2048 / 5;
+  static int ctr = 0;
+  stepper.move(stepsPerCompartment);
+  stepper.runToPosition();
+  ctr++;
+  Serial.println("💊 Dispensed. Waiting for hand or timeout...");
+
+  unsigned long start = millis();
+  while (millis() - start < 45000) {
+    if (digitalRead(IR_SENSOR) == LOW) {
+      Serial.println("✋ Hand detected...");
+      while (digitalRead(IR_SENSOR) == LOW) delay(200);
+      Serial.println("👋 Hand removed.");
+      break;
+    }
+    delay(200);
+  }
+
+  Serial.println("🔁 Returning to default.");
+  stepper.move(-stepsPerCompartment * ctr);
+  stepper.runToPosition();
+  ctr = 0;
+  
+  displayHomeScreen(); // Return to the home screen
+}
 
 void rotateToNextCompartment() {
     const int stepsPerCompartment = 2048 / 5;  // 360° / 5 compartments = 72°
