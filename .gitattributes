@@ -1,0 +1,49 @@
+# Auto detect text files and normalize line endings
+* text=auto
+
+# Explicitly treat common text file types as text
+*.java     text
+*.xml      text
+*.json     text
+*.yml      text
+*.yaml     text
+*.properties text
+*.md       text
+*.html     text
+*.css      text
+*.scss     text
+*.ts       text
+*.tsx      text
+*.js       text
+*.jsx      text
+
+# Scripts: prefer LF in repo for shell scripts, allow CRLF for Windows batch/PowerShell
+*.sh       text eol=lf
+*.bash     text eol=lf
+*.ps1      text eol=crlf
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# Binary files
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.pdf      binary
+*.zip      binary
+*.tar.gz   binary
+*.jar      binary
+*.exe      binary
+
+# Ensure lockfiles and package manifests are preserved as text
+package-lock.json text
+pnpm-lock.yaml text
+yarn.lock text
+
+# Reduce merge noise for generated files (optional): keep them as binary/text as needed
+target/** -text
+
+# End of .gitattributes
+# Auto detect text files and perform LF normalization
+* text=auto

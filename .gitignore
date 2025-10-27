@@ -1,0 +1,86 @@
+# ---- OS / misc ----
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# ---- IDEs / editors ----
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+/.classpath
+/.project
+/.settings/
+
+# ---- Java / Maven (backend) ----
+# Maven build output
+**/target/
+/backend/target/
+
+# Maven wrapper
+/backend/.mvn/
+
+# Compiled class files
+*.class
+
+# packaged archives
+*.jar
+*.war
+*.ear
+
+# maven intermediate files
+dependency-reduced-pom.xml
+release.properties
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+backup-*
+
+# JVM crash logs
+hs_err_pid*
+replay_pid*
+
+# ---- Node / Vite (frontend) ----
+/frontend/node_modules/
+/frontend/dist/
+/frontend/build/
+/frontend/.vite/
+
+# Local env files (do not commit secrets)
+/frontend/.env
+/frontend/.env.local
+/frontend/.env.*.local
+/backend/.env
+/backend/.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# ---- Editor swap / temp files ----
+*.swp
+*.swo
+*.tmp
+*.temp
+
+# ---- Packaging / archives ----
+*.zip
+*.tar.gz
+*.rar
+
+# ---- Other common ignores ----
+.cache/
+.parcel-cache/
+node_modules/
+dist/
+
+# Keep the following if you want to commit lockfiles; remove if you prefer ignoring them
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
+
+# End of .gitignore
