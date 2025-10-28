@@ -54,4 +54,23 @@ export const UserIcon: React.FC<{className?: string}> = ({className}) => (
   </svg>
 )
 
+export const WarningIcon: React.FC<{className?: string}> = ({className}) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.681-1.36 3.446 0l6.518 11.589c.75 1.334-.213 2.986-1.723 2.986H3.462c-1.51 0-2.473-1.652-1.723-2.986L8.257 3.1zM9 7a1 1 0 012 0v3a1 1 0 11-2 0V7zm.75 6.75a1.25 1.25 0 10-2.5 0 1.25 1.25 0 002.5 0z" clipRule="evenodd"/>
+  </svg>
+)
+
+export const SunIcon: React.FC<{className?: string}> = ({className}) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.364-6.364l-1.414 1.414M7.05 16.95l-1.414 1.414M18.364 18.364l-1.414-1.414M7.05 7.05L5.636 5.636" />
+    <circle cx="12" cy="12" r="3" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+export const MoonIcon: React.FC<{className?: string}> = ({className}) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+  </svg>
+)
+
 export default null

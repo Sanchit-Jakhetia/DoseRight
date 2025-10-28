@@ -25,7 +25,9 @@ body {
 .top-action svg { @apply w-8 h-8 }
 
 .schedule-item {
-  @apply flex items-center justify-between rounded-lg p-3 bg-gradient-to-r from-[#f6fffb] to-[#eefdfa] border border-[#dff6f3];
+  @apply flex items-center justify-between rounded-lg p-3 bg-gradient-to-r from-[#f6fffb] to-[#eefdfa];
+  border-width: 1px;
+  border-color: #dff6f3;
 }
 
 .status-taken { background-color: #d1fae5; color: #065f46; }
@@ -36,4 +38,74 @@ body {
 
 .adherence-chart { width: 200px; height: 200px }
 .adherence-chart canvas { width: 200px !important; height: 200px !important }
+
+/* Dark mode styles (applies when documentElement has class 'dark') */
+.dark body {
+  @apply bg-slate-900 text-slate-100;
+}
+
+.dark .card {
+  @apply bg-slate-800 shadow-none;
+}
+
+.dark .top-action {
+  @apply bg-slate-700 text-slate-200 shadow-sm;
+}
+
+.dark .schedule-item {
+  @apply rounded-lg p-3 bg-gradient-to-r from-slate-800 to-slate-700 text-slate-200;
+  border-width: 1px;
+  border-color: #334155;
+}
+
+.dark .small-pill { filter: brightness(0.9) }
+
+.dark .text-slate-600 { color: #94a3b8; }
+
+/* More comprehensive dark theme adjustments */
+.dark .card h2, .dark .card h3 { color: #e6eef6 }
+.dark .card p { color: #cbd5e1 }
+
+.dark .top-action {
+  @apply bg-slate-700 text-slate-200 shadow-sm;
+}
+.dark .top-action svg { color: #cbd5e1 }
+
+.dark .small-pill { @apply text-sm }
+
+/* Status badges in dark mode: keep color semantics but darker backgrounds */
+.dark .status-taken { background-color: #065f46; color: #bbf7d0; }
+.dark .status-upcoming { background-color: #1e3a8a; color: #dbeafe; }
+.dark .status-missed { background-color: #7f1d1d; color: #fee2e2; }
+
+/* Medicine card adjustments */
+/* .dark .border removed to avoid circular dependency with Tailwind utilities. */
+.dark .card .font-medium { color: #e6eef6 }
+
+/* Adherence card tweaks */
+.dark .adherence-chart { filter: contrast(0.9) }
+
+/* Buttons and interactive elements */
+.dark button:hover { filter: brightness(1.08) }
+
+/* Make small-muted text readable in dark */
+.dark .text-slate-500 { color: #94a3b8 }
+.dark .text-slate-400 { color: #94a3b8 }
+
+/* Medicine card dark theme */
+.medicine-card { transition: background-color 0.15s, border-color 0.15s }
+.dark .medicine-card {
+  @apply bg-slate-800 text-slate-200;
+  border-color: #334155;
+  box-shadow: none;
+}
+
+.dark .medicine-card .text-slate-500 { color: #94a3b8 }
+.dark .medicine-card .text-slate-400 { color: #94a3b8 }
+
+.dark .medicine-card .absolute.top-3.right-3 .hover\:bg-slate-100 { background-color: transparent }
+
+.dark .medicine-card button:hover { background-color: rgba(148,163,184,0.06) }
+
+
 
