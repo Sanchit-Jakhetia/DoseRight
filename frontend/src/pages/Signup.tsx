@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { signup as doSignup } from '../lib/auth'
+import { signup as doSignup, saveToken } from '../lib/auth'
 
 type Props = {
   onClose?: () => void
@@ -9,23 +9,25 @@ type Props = {
 
 export default function Signup({ onClose, onSuccess, isPage }: Props) {
   const [name, setName] = useState('')
-  const [mobile, setMobile] = useState('')
-  const [patientId, setPatientId] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
+  const [role, setRole] = useState<'patient' | 'caretaker' | 'doctor' | 'admin'>('patient')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    if (!name || !mobile || !patientId || !password) {
+    if (!name || !email || !phone || !password) {
       setError('Please fill all fields')
       return
     }
     setLoading(true)
     try {
-      const user = await doSignup({ name, mobile, patientId, password })
-      onSuccess(user)
+      const response = await doSignup({ name, email, phone, password, role })
+      saveToken(response.token)
+      onSuccess(response.user)
       if (onClose) onClose()
     } catch (err: any) {
       setError(err?.response?.data?.message ?? (err?.message || 'Signup failed'))
@@ -42,12 +44,21 @@ export default function Signup({ onClose, onSuccess, isPage }: Props) {
           <input value={name} onChange={e => setName(e.target.value)} className="w-full mt-1 p-2 rounded-md border" />
         </div>
         <div>
-          <label className="text-xs text-slate-600 dark:text-slate-300">Mobile</label>
-          <input value={mobile} onChange={e => setMobile(e.target.value)} className="w-full mt-1 p-2 rounded-md border" />
+          <label className="text-xs text-slate-600 dark:text-slate-300">Email</label>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full mt-1 p-2 rounded-md border" />
         </div>
         <div>
-          <label className="text-xs text-slate-600 dark:text-slate-300">Patient ID</label>
-          <input value={patientId} onChange={e => setPatientId(e.target.value)} className="w-full mt-1 p-2 rounded-md border" />
+          <label className="text-xs text-slate-600 dark:text-slate-300">Phone</label>
+          <input value={phone} onChange={e => setPhone(e.target.value)} className="w-full mt-1 p-2 rounded-md border" />
+        </div>
+        <div>
+          <label className="text-xs text-slate-600 dark:text-slate-300">Role</label>
+          <select value={role} onChange={e => setRole(e.target.value as any)} className="w-full mt-1 p-2 rounded-md border">
+            <option value="patient">Patient</option>
+            <option value="caretaker">Caretaker</option>
+            <option value="doctor">Doctor</option>
+            <option value="admin">Admin</option>
+          </select>
         </div>
         <div>
           <label className="text-xs text-slate-600 dark:text-slate-300">Password</label>

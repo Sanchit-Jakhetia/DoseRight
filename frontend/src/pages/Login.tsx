@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { login as doLogin } from '../lib/auth'
+import { login as doLogin, saveToken } from '../lib/auth'
 
 type Props = {
   onClose?: () => void
@@ -8,7 +8,7 @@ type Props = {
 }
 
 export default function Login({ onClose, onSuccess, isPage }: Props) {
-  const [patientId, setPatientId] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -16,14 +16,15 @@ export default function Login({ onClose, onSuccess, isPage }: Props) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    if (!patientId || !password) {
-      setError('Please enter Patient ID and password')
+    if (!email || !password) {
+      setError('Please enter email and password')
       return
     }
     setLoading(true)
     try {
-      const user = await doLogin({ patientId, password })
-      onSuccess(user)
+      const response = await doLogin({ email, password })
+      saveToken(response.token)
+      onSuccess(response.user)
       if (onClose) onClose()
     } catch (err: any) {
       setError(err?.response?.data?.message ?? (err?.message || 'Login failed'))
@@ -36,8 +37,8 @@ export default function Login({ onClose, onSuccess, isPage }: Props) {
       <form onSubmit={submit} className="space-y-3">
         {error && <div className="text-sm text-red-600">{error}</div>}
         <div>
-          <label className="text-xs text-slate-600 dark:text-slate-300">Patient ID</label>
-          <input value={patientId} onChange={e => setPatientId(e.target.value)} className="w-full mt-1 p-2 rounded-md border" />
+          <label className="text-xs text-slate-600 dark:text-slate-300">Email</label>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full mt-1 p-2 rounded-md border" />
         </div>
         <div>
           <label className="text-xs text-slate-600 dark:text-slate-300">Password</label>
