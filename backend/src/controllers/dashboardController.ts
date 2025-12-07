@@ -25,6 +25,75 @@ export const getMedicines = async (
   }
 };
 
+export const addMedicine = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const {
+      medicationName,
+      medicationStrength,
+      medicationForm,
+      dosagePerIntake,
+      slotIndex,
+      times,
+      daysOfWeek,
+      startDate,
+      endDate,
+      stock,
+    } = req.body;
+
+    // Validate required fields
+    if (!medicationName || !dosagePerIntake || !times || !daysOfWeek || slotIndex === undefined) {
+      res.status(400).json({ message: 'Missing required fields' });
+      return;
+    }
+
+    // Find patient by userId
+    const patient = await Patient.findOne({ userId: req.userId });
+    if (!patient) {
+      res.status(404).json({ message: 'Patient profile not found' });
+      return;
+    }
+
+    // Verify patient has a device configured
+    if (!patient.deviceId) {
+      res.status(400).json({ message: 'Patient device not configured' });
+      return;
+    }
+
+    // Create new medication plan
+    const medicationPlan = new MedicationPlan({
+      patientId: patient._id,
+      deviceId: patient.deviceId,
+      slotIndex: Number(slotIndex),
+      medicationName,
+      medicationStrength,
+      medicationForm: medicationForm || 'tablet',
+      dosagePerIntake,
+      times: Array.isArray(times) ? times : [times],
+      daysOfWeek: Array.isArray(daysOfWeek) ? daysOfWeek : [],
+      startDate: startDate ? new Date(startDate) : new Date(),
+      endDate: endDate ? new Date(endDate) : null,
+      active: true,
+      stock: stock || {
+        remaining: 0,
+        totalLoaded: 0,
+      },
+    });
+
+    await medicationPlan.save();
+
+    res.status(201).json({
+      message: 'Medicine added successfully',
+      medicationPlan,
+    });
+  } catch (error) {
+    console.error('Add medicine error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 export const getScheduleToday = async (
   req: AuthRequest,
   res: Response
@@ -42,7 +111,7 @@ export const getScheduleToday = async (
     // Convert to 1-7 format (1 = Monday, ..., 7 = Sunday)
     const adjustedDay = dayOfWeek === 0 ? 7 : dayOfWeek;
 
-    // Get all active medications for this patient
+    // Get all active medications for this patient (includes scheduled and pending)
     const medications = await MedicationPlan.find({
       patientId: patient._id,
       active: true,
@@ -88,10 +157,39 @@ export const getScheduleToday = async (
       }
     }
 
+    // Also get all medications that are active but don't have daysOfWeek/times set (pending medicines)
+    const allActiveMeds = await MedicationPlan.find({
+      patientId: patient._id,
+      active: true,
+    });
+
+    for (const med of allActiveMeds) {
+      // If no times are set (pending medicine) or no daysOfWeek, add as pending for today
+      if (!med.times || med.times.length === 0 || !med.daysOfWeek || med.daysOfWeek.length === 0) {
+        const key = `pending_${med._id}`;
+        
+        // Only add if not already in schedule
+        if (!scheduleMap.has(key)) {
+          scheduleMap.set(key, {
+            _id: key,
+            patientId: patient._id,
+            medicationPlanId: med.toObject(),
+            scheduledAt: today,
+            status: 'pending',
+            isPendingMedicine: true, // Flag to indicate this is a pending medicine without schedule
+            takenAt: null,
+          });
+        }
+      }
+    }
+
     // Convert map to sorted array by scheduled time
-    const schedules = Array.from(scheduleMap.values()).sort(
-      (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
-    );
+    const schedules = Array.from(scheduleMap.values()).sort((a, b) => {
+      // Pending medicines without schedules go to the end
+      const aTime = a.isPendingMedicine ? Infinity : new Date(a.scheduledAt).getTime();
+      const bTime = b.isPendingMedicine ? Infinity : new Date(b.scheduledAt).getTime();
+      return aTime - bTime;
+    });
 
     res.status(200).json(schedules);
   } catch (error) {

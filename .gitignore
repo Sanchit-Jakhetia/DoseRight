@@ -84,3 +84,6 @@ dist/
 # yarn.lock
 
 # End of .gitignore
+*.md
+*.md
+backend/README.md

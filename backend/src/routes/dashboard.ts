@@ -8,6 +8,7 @@ import {
   markDoseTaken,
   markDoseMissed,
   refillMedication,
+  addMedicine,
 } from '../controllers/dashboardController';
 
 const router = Router();
@@ -16,6 +17,7 @@ const router = Router();
 router.use(authMiddleware);
 
 router.get('/medicines', getMedicines);
+router.post('/medicines', addMedicine);
 router.get('/schedule', getScheduleToday);
 router.get('/adherence', getAdherence);
 router.get('/summary', getSummary);

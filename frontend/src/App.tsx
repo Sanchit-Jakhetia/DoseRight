@@ -37,6 +37,20 @@ export default function App() {
   const [user, setUser] = useState<any>(null)
   const [route, setRoute] = useState<string>(() => window.location.pathname || '/')
   const [confirmAction, setConfirmAction] = useState<any>(null)
+  const [showAddMedicine, setShowAddMedicine] = useState(false)
+  const [addMedicineForm, setAddMedicineForm] = useState({
+    medicationName: '',
+    medicationStrength: '',
+    medicationForm: 'tablet',
+    dosagePerIntake: 1,
+    slotIndex: 1,
+    times: ['08:00'],
+    repetitionType: 'daily', // 'daily', 'monthly', 'weekly', 'custom'
+    daysOfWeek: [1, 2, 3, 4, 5, 6, 7], // 1-7 for Mon-Sun
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: '',
+    stockRemaining: 0,
+  })
 
   // API base - use Vite env if provided, otherwise default to backend port 8080
   const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8080'
@@ -106,6 +120,146 @@ export default function App() {
     } catch (error: any) {
       alert(error?.response?.data?.message || 'Failed to refill medication')
     }
+  }
+
+  const handleAddMedicineSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    try {
+      const headers = getAuthHeaders()
+      
+      // Prepare data for backend
+      const medicineData = {
+        medicationName: addMedicineForm.medicationName,
+        medicationStrength: addMedicineForm.medicationStrength || undefined,
+        medicationForm: addMedicineForm.medicationForm,
+        dosagePerIntake: Number(addMedicineForm.dosagePerIntake),
+        slotIndex: Number(addMedicineForm.slotIndex),
+        times: addMedicineForm.times,
+        daysOfWeek: addMedicineForm.daysOfWeek,
+        startDate: new Date(addMedicineForm.startDate),
+        endDate: addMedicineForm.endDate ? new Date(addMedicineForm.endDate) : null,
+        active: true,
+        stock: {
+          remaining: Number(addMedicineForm.stockRemaining),
+          totalLoaded: Number(addMedicineForm.stockRemaining),
+        }
+      }
+      
+      const response = await axios.post(`${API_BASE}/api/dashboard/medicines`, medicineData, { headers })
+      
+      // Reset form and close modal
+      setAddMedicineForm({
+        medicationName: '',
+        medicationStrength: '',
+        medicationForm: 'tablet',
+        dosagePerIntake: 1,
+        slotIndex: 1,
+        times: ['08:00'],
+        repetitionType: 'daily',
+        daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: '',
+        stockRemaining: 0,
+      })
+      setShowAddMedicine(false)
+      fetchDashboardData()
+      alert('Medicine added successfully!')
+    } catch (error: any) {
+      alert(error?.response?.data?.message || 'Failed to add medicine')
+    }
+  }
+
+  const updateRepetition = (type: string) => {
+    setAddMedicineForm(prev => {
+      const days = [1, 2, 3, 4, 5, 6, 7]
+      switch(type) {
+        case 'daily':
+          return { ...prev, repetitionType: 'daily', daysOfWeek: [1, 2, 3, 4, 5, 6, 7] }
+        case 'weekly':
+          return { ...prev, repetitionType: 'weekly', daysOfWeek: [1, 2, 3, 4, 5, 6, 7] }
+        case 'monthly':
+          return { ...prev, repetitionType: 'monthly', daysOfWeek: [] }
+        default:
+          return { ...prev, repetitionType: type }
+      }
+    })
+  }
+
+  const toggleDayOfWeek = (day: number) => {
+    setAddMedicineForm(prev => ({
+      ...prev,
+      daysOfWeek: prev.daysOfWeek.includes(day)
+        ? prev.daysOfWeek.filter(d => d !== day)
+        : [...prev.daysOfWeek, day].sort()
+    }))
+  }
+
+  const addTime = () => {
+    setAddMedicineForm(prev => ({
+      ...prev,
+      times: [...prev.times, '12:00']
+    }))
+  }
+
+  const removeTime = (index: number) => {
+    setAddMedicineForm(prev => ({
+      ...prev,
+      times: prev.times.filter((_, i) => i !== index)
+    }))
+  }
+
+  const updateTime = (index: number, value: string) => {
+    setAddMedicineForm(prev => ({
+      ...prev,
+      times: prev.times.map((t, i) => i === index ? value : t)
+    }))
+  }
+
+  const getCalendarDays = (year: number, month: number) => {
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const daysInMonth = lastDay.getDate()
+    const startingDayOfWeek = firstDay.getDay()
+    
+    const days = []
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null)
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(i)
+    }
+    return days
+  }
+
+  const shouldHighlightDate = (day: number | null, month: number, year: number) => {
+    if (!day) return false
+    
+    const date = new Date(year, month, day)
+    const dayOfWeek = date.getDay()
+    const adjustedDay = dayOfWeek === 0 ? 7 : dayOfWeek
+    
+    // Check if date is within start/end range
+    const startDate = addMedicineForm.startDate ? new Date(addMedicineForm.startDate) : null
+    const endDate = addMedicineForm.endDate ? new Date(addMedicineForm.endDate) : null
+    
+    if (startDate) {
+      startDate.setHours(0, 0, 0, 0)
+      if (date < startDate) return false
+    }
+    
+    if (endDate) {
+      endDate.setHours(23, 59, 59, 999)
+      if (date > endDate) return false
+    }
+    
+    // Check repetition pattern
+    if (addMedicineForm.repetitionType === 'daily') {
+      return true
+    } else if (addMedicineForm.repetitionType === 'weekly') {
+      return addMedicineForm.daysOfWeek.includes(adjustedDay)
+    }
+    return false
   }
 
   useEffect(() => {
@@ -193,7 +347,7 @@ export default function App() {
         <div className="col-span-12">
           <div className="grid grid-cols-4 gap-4">
             <div className="top-action flex flex-col items-center justify-center"> <HomeIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Dashboard</div> </div>
-            <div className="top-action flex flex-col items-center justify-center"> <PlusIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Add Medicine</div> </div>
+            <div onClick={() => setShowAddMedicine(true)} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <PlusIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Add Medicine</div> </div>
             <div className="top-action flex flex-col items-center justify-center"> <ClockIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">History</div> </div>
             <div className="top-action flex flex-col items-center justify-center"> <BoxIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Refill</div> </div>
           </div>
@@ -365,6 +519,275 @@ export default function App() {
                 Confirm
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Medicine Modal */}
+      {showAddMedicine && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg w-full max-w-2xl my-8">
+            <div className="sticky top-0 bg-white dark:bg-slate-800 border-b dark:border-slate-700 p-6 rounded-t-xl flex items-center justify-between">
+              <div className="flex-1"></div>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Add New Medicine</h2>
+              <div className="flex-1 flex justify-end">
+                <button onClick={() => setShowAddMedicine(false)} className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-2xl leading-none">×</button>
+              </div>
+            </div>
+            
+            <form onSubmit={handleAddMedicineSubmit} className="p-6 space-y-6 overflow-y-auto max-h-[calc(100vh-200px)]">
+              {/* Basic Info */}
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Medicine Details</h3>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Medicine Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={addMedicineForm.medicationName}
+                      onChange={(e) => setAddMedicineForm({...addMedicineForm, medicationName: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                      placeholder="e.g., Paracetamol"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Strength</label>
+                    <input
+                      type="text"
+                      value={addMedicineForm.medicationStrength}
+                      onChange={(e) => setAddMedicineForm({...addMedicineForm, medicationStrength: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                      placeholder="e.g., 500mg"
+                    />
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Form *</label>
+                    <select
+                      value={addMedicineForm.medicationForm}
+                      onChange={(e) => setAddMedicineForm({...addMedicineForm, medicationForm: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                    >
+                      <option value="tablet">Tablet</option>
+                      <option value="capsule">Capsule</option>
+                      <option value="syrup">Syrup</option>
+                      <option value="injection">Injection</option>
+                      <option value="cream">Cream</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Device Slot *</label>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      max="10"
+                      value={addMedicineForm.slotIndex}
+                      onChange={(e) => setAddMedicineForm({...addMedicineForm, slotIndex: Number(e.target.value)})}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                      placeholder="1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Dose per Intake *</label>
+                    <input
+                      type="number"
+                      required
+                      min="0.25"
+                      step="0.25"
+                      value={addMedicineForm.dosagePerIntake}
+                      onChange={(e) => setAddMedicineForm({...addMedicineForm, dosagePerIntake: Number(e.target.value)})}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                      placeholder="1"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Times */}
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Times to Take Medicine *</h3>
+                <div className="space-y-2">
+                  {addMedicineForm.times.map((time, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <input
+                        type="time"
+                        required
+                        value={time}
+                        onChange={(e) => updateTime(idx, e.target.value)}
+                        className="flex-1 px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                      />
+                      {addMedicineForm.times.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeTime(idx)}
+                          className="px-3 py-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-md hover:bg-red-200 dark:hover:bg-red-900/50"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={addTime}
+                  className="w-full px-3 py-2 border border-dashed border-slate-300 dark:border-slate-600 rounded-md text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700"
+                >
+                  + Add Another Time
+                </button>
+              </div>
+
+              {/* Repetition */}
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Repetition Pattern *</h3>
+                <div className="grid grid-cols-3 gap-2">
+                  {['daily', 'weekly', 'monthly'].map(rep => (
+                    <button
+                      key={rep}
+                      type="button"
+                      onClick={() => updateRepetition(rep)}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                        addMedicineForm.repetitionType === rep
+                          ? 'bg-cyan-600 text-white'
+                          : 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-600'
+                      }`}
+                    >
+                      {rep.charAt(0).toUpperCase() + rep.slice(1)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Days of Week Selector */}
+                {addMedicineForm.repetitionType === 'weekly' && (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Select Days *</label>
+                    <div className="grid grid-cols-7 gap-2">
+                      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, idx) => {
+                        const dayNum = idx + 1
+                        return (
+                          <button
+                            key={dayNum}
+                            type="button"
+                            onClick={() => toggleDayOfWeek(dayNum)}
+                            className={`py-2 rounded-md text-sm font-medium transition-colors ${
+                              addMedicineForm.daysOfWeek.includes(dayNum)
+                                ? 'bg-cyan-600 text-white'
+                                : 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-600'
+                            }`}
+                          >
+                            {day}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Calendar Preview */}
+              {addMedicineForm.repetitionType !== 'monthly' && (
+                <div className="space-y-4">
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-100">Calendar Preview (Current Month)</h3>
+                  <div className="bg-slate-50 dark:bg-slate-700 p-4 rounded-md">
+                    <div className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3 text-center">
+                      {new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}
+                    </div>
+                    <div className="grid grid-cols-7 gap-2 text-center">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                        <div key={d} className="text-xs font-semibold text-slate-600 dark:text-slate-400">{d}</div>
+                      ))}
+                      {(() => {
+                        const currentYear = new Date().getFullYear()
+                        const currentMonth = new Date().getMonth()
+                        return getCalendarDays(currentYear, currentMonth).map((day, idx) => (
+                          <div
+                            key={idx}
+                            className={`p-2 text-xs rounded ${
+                              shouldHighlightDate(day, currentMonth, currentYear)
+                                ? 'bg-cyan-200 dark:bg-cyan-900/50 text-cyan-900 dark:text-cyan-100 font-semibold'
+                                : day ? 'bg-white dark:bg-slate-600 text-slate-600 dark:text-slate-400' : ''
+                            }`}
+                          >
+                            {day}
+                          </div>
+                        ))
+                      })()}
+                    </div>
+                    <div className="mt-3 text-xs text-slate-500 dark:text-slate-400 text-center">
+                      Highlighted dates show when medicine will be taken based on your schedule
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Dates */}
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Duration</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Start Date *</label>
+                    <input
+                      type="date"
+                      required
+                      value={addMedicineForm.startDate}
+                      onChange={(e) => setAddMedicineForm({...addMedicineForm, startDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">End Date (Optional)</label>
+                    <input
+                      type="date"
+                      value={addMedicineForm.endDate}
+                      onChange={(e) => setAddMedicineForm({...addMedicineForm, endDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Stock */}
+              <div className="space-y-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Stock</h3>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Initial Stock Count</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={addMedicineForm.stockRemaining}
+                    onChange={(e) => setAddMedicineForm({...addMedicineForm, stockRemaining: Number(e.target.value)})}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-3 justify-end pt-4 border-t dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setShowAddMedicine(false)}
+                  className="px-4 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-md bg-cyan-600 text-white hover:bg-cyan-700 transition-colors font-medium"
+                >
+                  Add Medicine
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
