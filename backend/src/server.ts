@@ -4,6 +4,7 @@ import { config } from './config/config';
 import { connectDB } from './models';
 import authRoutes from './routes/auth';
 import dashboardRoutes from './routes/dashboard';
+import hardwareRouter from './routes/hardware.routes';
 
 const app: Application = express();
 
@@ -23,6 +24,7 @@ app.get('/health', (req: Request, res: Response) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/hardware', hardwareRouter);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
@@ -36,10 +38,11 @@ const startServer = async () => {
     await connectDB();
 
     // Start Express server
-    app.listen(config.port, () => {
-      console.log(`\n🚀 Server running on port ${config.port} in ${config.nodeEnv} mode`);
+    const host = '0.0.0.0';
+    app.listen(config.port, host, () => {
+      console.log(`\n🚀 Server running on http://${host}:${config.port} in ${config.nodeEnv} mode`);
       console.log(`✓ CORS enabled for: ${config.corsOrigin}`);
-      console.log(`✓ API Base URL: http://localhost:${config.port}/api\n`);
+      console.log(`✓ API Base URL: http://${host === '0.0.0.0' ? 'localhost' : host}:${config.port}/api\n`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);

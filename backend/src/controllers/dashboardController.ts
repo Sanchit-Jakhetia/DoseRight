@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
-import { DoseLog, MedicationPlan, Patient, type IDoseLog } from '../models';
+import { DoseLog, MedicationPlan, Patient, User, Device, type IDoseLog } from '../models';
 
 export const getMedicines = async (
   req: AuthRequest,
@@ -271,6 +271,247 @@ export const getSummary = async (
   }
 };
 
+export const getHistory = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    // Find patient by userId
+    const patient = await Patient.findOne({ userId: req.userId });
+    if (!patient) {
+      res.status(404).json({ message: 'Patient profile not found' });
+      return;
+    }
+
+    // Get all dose logs for the patient
+    const allLogs = await DoseLog.find({
+      patientId: patient._id,
+    }).populate('medicationPlanId').sort({ scheduledAt: -1 });
+
+    // Calculate summary stats
+    const totalTaken = allLogs.filter(log => log.status === 'taken').length;
+    const totalMissed = allLogs.filter(log => log.status === 'missed').length;
+    const total = totalTaken + totalMissed;
+    const adherenceRate = total > 0 ? Math.round((totalTaken / total) * 100) : 0;
+
+    // Calculate current streak (consecutive days with all doses taken)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let currentStreak = 0;
+    let checkDate = new Date(today);
+    
+    for (let i = 0; i < 365; i++) {
+      const nextDay = new Date(checkDate);
+      nextDay.setDate(checkDate.getDate() + 1);
+      
+      const dayLogs = allLogs.filter(log => {
+        const logDate = new Date(log.scheduledAt);
+        return logDate >= checkDate && logDate < nextDay;
+      });
+      
+      if (dayLogs.length === 0) break;
+      
+      const allTaken = dayLogs.every(log => log.status === 'taken');
+      if (!allTaken) break;
+      
+      currentStreak++;
+      checkDate.setDate(checkDate.getDate() - 1);
+    }
+
+    // Weekly trend (last 7 days)
+    const weeklyTrend = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - i);
+      const nextDay = new Date(date);
+      nextDay.setDate(date.getDate() + 1);
+      
+      const dayLogs = allLogs.filter(log => {
+        const logDate = new Date(log.scheduledAt);
+        return logDate >= date && logDate < nextDay;
+      });
+      
+      const taken = dayLogs.filter(log => log.status === 'taken').length;
+      const total = dayLogs.length;
+      
+      weeklyTrend.push({
+        day: date.toLocaleDateString('en-US', { weekday: 'short' }),
+        date: date.toISOString(),
+        taken,
+        total,
+      });
+    }
+
+    // History by medicine
+    const medications = await MedicationPlan.find({
+      patientId: patient._id,
+      active: true,
+    });
+
+    const byMedicine = medications.map(med => {
+      const medLogs = allLogs.filter(log => 
+        log.medicationPlanId && log.medicationPlanId._id.toString() === med._id.toString()
+      );
+      
+      const taken = medLogs.filter(log => log.status === 'taken').length;
+      const total = medLogs.length;
+      const adherenceRate = total > 0 ? Math.round((taken / total) * 100) : 0;
+      
+      return {
+        medicationName: med.medicationName,
+        medicationStrength: med.medicationStrength,
+        medicationForm: med.medicationForm,
+        taken,
+        total,
+        adherenceRate,
+      };
+    });
+
+    // Recent logs (last 30 days)
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+    
+    const recentLogs = allLogs
+      .filter(log => new Date(log.scheduledAt) >= thirtyDaysAgo)
+      .slice(0, 50);
+
+    res.status(200).json({
+      summary: {
+        totalTaken,
+        totalMissed,
+        adherenceRate,
+        currentStreak,
+      },
+      weeklyTrend,
+      byMedicine,
+      recentLogs,
+    });
+  } catch (error) {
+    console.error('Get history error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const getProfile = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    // Find user by userId
+    const user = await User.findById(req.userId);
+    if (!user) {
+      res.status(404).json({ message: 'User not found' });
+      return;
+    }
+
+    // Find patient profile
+    const patient = await Patient.findOne({ userId: req.userId }).populate('deviceId');
+
+    // Return user and patient data
+    res.status(200).json({
+      user: {
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isActive: user.isActive,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+      patient: patient ? {
+        medicalProfile: patient.medicalProfile,
+        caretakers: patient.caretakers,
+        doctors: patient.doctors,
+      } : null,
+      device: patient?.deviceId ? {
+        deviceId: (patient.deviceId as any).deviceId,
+        slotCount: (patient.deviceId as any).slotCount,
+        timezone: (patient.deviceId as any).timezone,
+        batteryLevel: (patient.deviceId as any).batteryLevel,
+        wifiConnected: (patient.deviceId as any).wifiConnected,
+      } : null,
+    });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const updateProfile = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { name, phone, allergies, illnesses, otherNotes } = req.body;
+
+    // Update user information
+    const user = await User.findById(req.userId);
+    if (!user) {
+      res.status(404).json({ message: 'User not found' });
+      return;
+    }
+
+    if (name) user.name = name;
+    if (phone !== undefined) user.phone = phone;
+    await user.save();
+
+    // Update or create patient medical profile
+    let patient = await Patient.findOne({ userId: req.userId });
+    
+    if (!patient) {
+      // Create patient profile if it doesn't exist
+      patient = new Patient({
+        userId: req.userId,
+        medicalProfile: {
+          allergies: [],
+          illnesses: [],
+          otherNotes: '',
+        },
+      });
+    }
+
+    // Ensure medicalProfile exists
+    if (!patient.medicalProfile) {
+      patient.medicalProfile = {
+        allergies: [],
+        illnesses: [],
+        otherNotes: '',
+      };
+    }
+
+    // Update medical profile fields
+    if (allergies !== undefined) {
+      patient.medicalProfile.allergies = allergies;
+    }
+    
+    if (illnesses !== undefined) {
+      // Convert illness names to illness objects
+      patient.medicalProfile.illnesses = illnesses.map((name: string) => ({
+        name,
+        status: 'ongoing',
+      }));
+    }
+    
+    if (otherNotes !== undefined) {
+      patient.medicalProfile.otherNotes = otherNotes;
+    }
+
+    await patient.save();
+
+    res.status(200).json({ 
+      message: 'Profile updated successfully',
+      user: {
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      },
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 export const markDoseTaken = async (
   req: AuthRequest,
   res: Response
@@ -359,3 +600,64 @@ export const refillMedication = async (
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+export const createDevice = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { deviceId, timezone, slotCount } = req.body;
+
+    if (!deviceId) {
+      res.status(400).json({ message: 'Device ID is required' });
+      return;
+    }
+
+    // Find or create device
+    let device = await Device.findOne({ deviceId });
+    
+    if (!device) {
+      device = new Device({
+        deviceId,
+        timezone: timezone || 'UTC',
+        slotCount: slotCount || 4,
+        batteryLevel: 100,
+        wifiConnected: true,
+      });
+      await device.save();
+    }
+
+    // Link device to patient
+    const patient = await Patient.findOne({ userId: req.userId });
+    
+    if (patient) {
+      patient.deviceId = device._id;
+      await patient.save();
+    } else {
+      // Create patient with device if doesn't exist
+      const newPatient = new Patient({
+        userId: req.userId,
+        deviceId: device._id,
+        medicalProfile: {
+          allergies: [],
+          illnesses: [],
+          otherNotes: '',
+        },
+      });
+      await newPatient.save();
+    }
+
+    res.status(200).json({
+      message: 'Device created/linked successfully',
+      device: {
+        deviceId: device.deviceId,
+        timezone: device.timezone,
+        slotCount: device.slotCount,
+      },
+    });
+  } catch (error) {
+    console.error('Create device error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+

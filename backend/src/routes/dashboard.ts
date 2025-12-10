@@ -9,6 +9,10 @@ import {
   markDoseMissed,
   refillMedication,
   addMedicine,
+  getHistory,
+  getProfile,
+  updateProfile,
+  createDevice,
 } from '../controllers/dashboardController';
 
 const router = Router();
@@ -21,6 +25,10 @@ router.post('/medicines', addMedicine);
 router.get('/schedule', getScheduleToday);
 router.get('/adherence', getAdherence);
 router.get('/summary', getSummary);
+router.get('/history', getHistory);
+router.get('/profile', getProfile);
+router.patch('/profile', updateProfile);
+router.post('/device', createDevice);
 router.patch('/doses/:doseId/mark-taken', markDoseTaken);
 router.patch('/doses/:doseId/mark-missed', markDoseMissed);
 router.patch('/medications/:medicationId/refill', refillMedication);
