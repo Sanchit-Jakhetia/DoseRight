@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import AdherenceChart from './components/AdherenceChart'
 import AuthPage from './pages/AuthPage'
+import PatientDetails from './pages/PatientDetails'
+import CaretakerDashboard from './pages/CaretakerDashboard'
+import DoctorDashboard from './pages/DoctorDashboard'
+import AdminDashboard from './pages/AdminDashboard'
 import { HomeIcon, PlusIcon, ClockIcon, BoxIcon, PillIcon, EditIcon, TrashIcon, WarningIcon, SunIcon, MoonIcon } from './components/Icons'
 
 type Medicine = {
@@ -35,9 +39,26 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false)
   const [showSignup, setShowSignup] = useState(false)
   const [user, setUser] = useState<any>(null)
+  const [showPatientDetails, setShowPatientDetails] = useState(false)
+  const [newPatient, setNewPatient] = useState<any>(null)
   const [route, setRoute] = useState<string>(() => window.location.pathname || '/')
   const [confirmAction, setConfirmAction] = useState<any>(null)
   const [showAddMedicine, setShowAddMedicine] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyData, setHistoryData] = useState<any>(null)
+  const [showRefill, setShowRefill] = useState(false)
+  const [refillMedicines, setRefillMedicines] = useState<any[]>([])
+  const [showProfile, setShowProfile] = useState(false)
+  const [profileData, setProfileData] = useState<any>(null)
+  const [editingProfile, setEditingProfile] = useState(false)
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    allergies: '',
+    illnesses: '',
+    otherNotes: '',
+  })
   const [addMedicineForm, setAddMedicineForm] = useState({
     medicationName: '',
     medicationStrength: '',
@@ -56,7 +77,11 @@ export default function App() {
   const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8080'
 
   const getAuthHeaders = () => {
-    return user?.token ? { Authorization: `Bearer ${user.token}` } : {}
+    const headers = user?.token ? { Authorization: `Bearer ${user.token}` } : {}
+    if (!user?.token) {
+      console.warn('⚠️ No token in user object:', user)
+    }
+    return headers
   }
 
   const fetchDashboardData = () => {
@@ -167,6 +192,94 @@ export default function App() {
       alert('Medicine added successfully!')
     } catch (error: any) {
       alert(error?.response?.data?.message || 'Failed to add medicine')
+    }
+  }
+
+  const fetchHistory = async () => {
+    if (!user) return
+    
+    try {
+      const headers = getAuthHeaders()
+      const response = await axios.get(`${API_BASE}/api/dashboard/history`, { headers })
+      setHistoryData(response.data)
+      setShowHistory(true)
+    } catch (error: any) {
+      alert(error?.response?.data?.message || 'Failed to fetch history')
+    }
+  }
+
+  const openRefillPanel = async () => {
+    if (!user) return
+    
+    try {
+      const headers = getAuthHeaders()
+      const response = await axios.get(`${API_BASE}/api/dashboard/medicines`, { headers })
+      setRefillMedicines(Array.isArray(response.data) ? response.data : [])
+      setShowRefill(true)
+    } catch (error: any) {
+      alert(error?.response?.data?.message || 'Failed to fetch medicines')
+    }
+  }
+
+  const handleQuickRefill = async (medicationId: string, amount: number) => {
+    try {
+      const headers = getAuthHeaders()
+      await axios.patch(`${API_BASE}/api/dashboard/medications/${medicationId}/refill`, 
+        { amount }, 
+        { headers }
+      )
+      // Refresh the refill panel
+      openRefillPanel()
+      fetchDashboardData()
+    } catch (error: any) {
+      alert(error?.response?.data?.message || 'Failed to refill medication')
+    }
+  }
+
+  const openProfilePanel = async () => {
+    if (!user) return
+    
+    try {
+      const headers = getAuthHeaders()
+      const response = await axios.get(`${API_BASE}/api/dashboard/profile`, { headers })
+      setProfileData(response.data)
+      
+      // Populate form with current data
+      setProfileForm({
+        name: response.data.user?.name || '',
+        email: response.data.user?.email || '',
+        phone: response.data.user?.phone || '',
+        allergies: response.data.patient?.medicalProfile?.allergies?.join(', ') || '',
+        illnesses: response.data.patient?.medicalProfile?.illnesses?.map((i: any) => i.name).join(', ') || '',
+        otherNotes: response.data.patient?.medicalProfile?.otherNotes || '',
+      })
+      
+      setShowProfile(true)
+      setEditingProfile(false)
+    } catch (error: any) {
+      alert(error?.response?.data?.message || 'Failed to fetch profile')
+    }
+  }
+
+  const handleUpdateProfile = async () => {
+    if (!user) return
+    
+    try {
+      const headers = getAuthHeaders()
+      await axios.patch(`${API_BASE}/api/dashboard/profile`, {
+        name: profileForm.name,
+        phone: profileForm.phone,
+        allergies: profileForm.allergies.split(',').map(a => a.trim()).filter(a => a),
+        illnesses: profileForm.illnesses.split(',').map(i => i.trim()).filter(i => i),
+        otherNotes: profileForm.otherNotes,
+      }, { headers })
+      
+      alert('Profile updated successfully!')
+      setEditingProfile(false)
+      // Refresh profile data
+      openProfilePanel()
+    } catch (error: any) {
+      alert(error?.response?.data?.message || 'Failed to update profile')
     }
   }
 
@@ -291,25 +404,58 @@ export default function App() {
   useEffect(() => {
     try {
       const raw = localStorage.getItem('auth')
-      const token = localStorage.getItem('token')
-      if (raw && token) {
+      if (raw) {
         const userData = JSON.parse(raw)
-        // Combine stored user data with token
-        setUser({ ...userData, token })
+        // Token should be in userData from login/signup response
+        setUser(userData)
       }
     } catch (e) {}
   }, [])
 
   return (
     <div className="min-h-screen p-6">
-      {(route === '/login' || route === '/signup') ? (
+      {/* Patient Details Form - Show after login if patient has no profile */}
+      {showPatientDetails && newPatient ? (
+        <PatientDetails 
+          user={newPatient}
+          onComplete={() => {
+            setUser(newPatient)
+            localStorage.setItem('auth', JSON.stringify(newPatient))
+            setShowPatientDetails(false)
+            setNewPatient(null)
+            navigate('/')
+          }}
+        />
+      ) : (route === '/login' || route === '/signup') ? (
         <AuthPage 
           initialTab={route === '/signup' ? 'signup' : 'login'} 
           onClose={() => navigate('/')} 
-          onSuccess={(u) => { 
-            setUser(u); 
-            localStorage.setItem('auth', JSON.stringify(u)); 
-            navigate('/'); 
+          onSuccess={async (u) => {
+            // If patient role and new login, check if patient profile exists
+            if (u.role === 'patient' && u.isNewLogin) {
+              try {
+                const headers = { Authorization: `Bearer ${u.token}` }
+                const response = await axios.get(`${API_BASE}/api/dashboard/profile`, { headers })
+                
+                // Check if patient has device assigned (full profile)
+                if (!response.data.device) {
+                  // No device/profile, show details form
+                  setNewPatient(u)
+                  setShowPatientDetails(true)
+                  return
+                }
+              } catch (error) {
+                // If profile doesn't exist or error, show details form
+                setNewPatient(u)
+                setShowPatientDetails(true)
+                return
+              }
+            }
+            
+            // Otherwise proceed normally
+            setUser(u)
+            localStorage.setItem('auth', JSON.stringify(u))
+            navigate('/')
           }} 
         />
       ) : (
@@ -343,13 +489,21 @@ export default function App() {
         </div>
       </header>
 
+      {user?.role === 'admin' ? (
+        <AdminDashboard user={user} />
+      ) : user?.role === 'caretaker' ? (
+        <CaretakerDashboard user={user} />
+      ) : user?.role === 'doctor' ? (
+        <DoctorDashboard user={user} />
+      ) : (
+        <>
       <div className="grid grid-cols-12 gap-6">
         <div className="col-span-12">
           <div className="grid grid-cols-4 gap-4">
-            <div className="top-action flex flex-col items-center justify-center"> <HomeIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Dashboard</div> </div>
+            <div onClick={openProfilePanel} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <HomeIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Profile</div> </div>
             <div onClick={() => setShowAddMedicine(true)} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <PlusIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Add Medicine</div> </div>
-            <div className="top-action flex flex-col items-center justify-center"> <ClockIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">History</div> </div>
-            <div className="top-action flex flex-col items-center justify-center"> <BoxIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Refill</div> </div>
+            <div onClick={fetchHistory} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <ClockIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">History</div> </div>
+            <div onClick={openRefillPanel} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <BoxIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Refill</div> </div>
           </div>
         </div>
 
@@ -791,6 +945,602 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* History Modal */}
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg w-full max-w-5xl my-8 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="sticky top-0 bg-white dark:bg-slate-800 border-b dark:border-slate-700 p-6 rounded-t-xl flex items-center justify-between">
+              <div className="flex-1"></div>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Medication History</h2>
+              <div className="flex-1 flex justify-end">
+                <button onClick={() => setShowHistory(false)} className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-2xl leading-none">×</button>
+              </div>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              {historyData ? (
+                <div className="space-y-6">
+                  {/* Summary Stats */}
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 p-4 rounded-lg">
+                      <div className="text-2xl font-bold text-green-700 dark:text-green-300">{historyData.summary?.totalTaken || 0}</div>
+                      <div className="text-sm text-green-600 dark:text-green-400">Doses Taken</div>
+                    </div>
+                    <div className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20 p-4 rounded-lg">
+                      <div className="text-2xl font-bold text-red-700 dark:text-red-300">{historyData.summary?.totalMissed || 0}</div>
+                      <div className="text-sm text-red-600 dark:text-red-400">Doses Missed</div>
+                    </div>
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 p-4 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-700 dark:text-blue-300">{historyData.summary?.adherenceRate || 0}%</div>
+                      <div className="text-sm text-blue-600 dark:text-blue-400">Adherence Rate</div>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 p-4 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-700 dark:text-purple-300">{historyData.summary?.currentStreak || 0}</div>
+                      <div className="text-sm text-purple-600 dark:text-purple-400">Day Streak</div>
+                    </div>
+                  </div>
+
+                  {/* Weekly Trend */}
+                  {historyData.weeklyTrend && historyData.weeklyTrend.length > 0 && (
+                    <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4">Weekly Adherence Trend</h3>
+                      <div className="flex items-end justify-between gap-3" style={{ height: '200px' }}>
+                        {historyData.weeklyTrend.map((day: any, idx: number) => {
+                          const percentage = day.total > 0 ? (day.taken / day.total) * 100 : 0
+                          const barHeight = percentage > 0 ? Math.max(percentage, 5) : 0 // Minimum 5% for visibility
+                          return (
+                            <div key={idx} className="flex-1 flex flex-col items-center justify-end gap-2 h-full">
+                              <div className="text-xs text-slate-600 dark:text-slate-400 font-medium mb-1">
+                                {day.total > 0 ? `${percentage.toFixed(0)}%` : '-'}
+                              </div>
+                              <div className="w-full flex flex-col justify-end items-center" style={{ height: '140px' }}>
+                                {day.total > 0 ? (
+                                  <div 
+                                    className="w-full bg-gradient-to-t from-cyan-500 to-cyan-400 rounded-t-lg transition-all hover:from-cyan-600 hover:to-cyan-500"
+                                    style={{ height: `${barHeight}%`, minHeight: '4px' }}
+                                  ></div>
+                                ) : (
+                                  <div className="w-full bg-slate-200 dark:bg-slate-500 rounded" style={{ height: '4px' }}></div>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-2">{day.day}</div>
+                              <div className="text-xs text-slate-400 dark:text-slate-500">{day.taken}/{day.total}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Medication History by Medicine */}
+                  {historyData.byMedicine && historyData.byMedicine.length > 0 && (
+                    <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4">History by Medicine</h3>
+                      <div className="space-y-4">
+                        {historyData.byMedicine.map((med: any, idx: number) => (
+                          <div key={idx} className="border dark:border-slate-600 rounded-lg p-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <div>
+                                <div className="font-medium text-slate-900 dark:text-slate-100">{med.medicationName}</div>
+                                <div className="text-sm text-slate-500 dark:text-slate-400">
+                                  {med.medicationStrength} {med.medicationForm}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                                  {med.taken}/{med.total} doses
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">
+                                  {med.adherenceRate}% adherence
+                                </div>
+                              </div>
+                            </div>
+                            <div className="relative h-2 bg-slate-100 dark:bg-slate-600 rounded-full overflow-hidden">
+                              <div 
+                                className="absolute left-0 top-0 h-full bg-gradient-to-r from-cyan-500 to-cyan-600 rounded-full"
+                                style={{ width: `${med.adherenceRate}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent Dose Logs */}
+                  {historyData.recentLogs && historyData.recentLogs.length > 0 && (
+                    <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4">Recent Activity (Last 30 Days)</h3>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {historyData.recentLogs.map((log: any, idx: number) => (
+                          <div key={idx} className="flex items-center justify-between py-3 px-4 bg-slate-50 dark:bg-slate-600 rounded-lg">
+                            <div className="flex items-center gap-4">
+                              <div className={`w-2 h-2 rounded-full ${
+                                log.status === 'taken' ? 'bg-green-500' : 
+                                log.status === 'missed' ? 'bg-red-500' : 
+                                'bg-yellow-500'
+                              }`}></div>
+                              <div>
+                                <div className="font-medium text-slate-900 dark:text-slate-100">
+                                  {log.medicationPlanId?.medicationName || 'Unknown Medicine'}
+                                </div>
+                                <div className="text-sm text-slate-500 dark:text-slate-400">
+                                  {new Date(log.scheduledAt).toLocaleDateString('en-US', { 
+                                    month: 'short', 
+                                    day: 'numeric',
+                                    year: 'numeric'
+                                  })} at {new Date(log.scheduledAt).toLocaleTimeString('en-US', { 
+                                    hour: '2-digit', 
+                                    minute: '2-digit' 
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                            <div>
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                                log.status === 'taken' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' :
+                                log.status === 'missed' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
+                                'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                              }`}>
+                                {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-64">
+                  <div className="text-slate-500 dark:text-slate-400">Loading history...</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Refill Modal */}
+      {showRefill && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg w-full max-w-3xl my-8 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="sticky top-0 bg-white dark:bg-slate-800 border-b dark:border-slate-700 p-6 rounded-t-xl flex items-center justify-between">
+              <div className="flex-1"></div>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Refill Medications</h2>
+              <div className="flex-1 flex justify-end">
+                <button onClick={() => setShowRefill(false)} className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-2xl leading-none">×</button>
+              </div>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              {refillMedicines.length > 0 ? (
+                <div className="space-y-4">
+                  {refillMedicines.map((med: any) => {
+                    const remaining = med.stock?.remaining || 0
+                    const totalLoaded = med.stock?.totalLoaded || 0
+                    const percentage = totalLoaded > 0 ? (remaining / totalLoaded) * 100 : 0
+                    const isLow = percentage < 30
+                    const isCritical = percentage < 10
+                    
+                    return (
+                      <div key={med._id} className={`border rounded-lg p-5 ${
+                        isCritical ? 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' :
+                        isLow ? 'border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/10' :
+                        'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700'
+                      }`}>
+                        {/* Header */}
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-semibold text-slate-900 dark:text-slate-100">{med.medicationName}</h3>
+                              {isCritical && (
+                                <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs rounded-full font-medium">
+                                  Critical
+                                </span>
+                              )}
+                              {isLow && !isCritical && (
+                                <span className="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 text-xs rounded-full font-medium">
+                                  Low Stock
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                              {med.medicationStrength} {med.medicationForm} • Slot {med.slotIndex}
+                            </div>
+                            <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                              Times: {med.times?.join(', ') || 'Not set'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Stock Info */}
+                        <div className="mb-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm text-slate-600 dark:text-slate-400">Current Stock</span>
+                            <span className={`text-sm font-semibold ${
+                              isCritical ? 'text-red-700 dark:text-red-300' :
+                              isLow ? 'text-yellow-700 dark:text-yellow-300' :
+                              'text-slate-900 dark:text-slate-100'
+                            }`}>
+                              {remaining} {med.medicationForm}s remaining
+                            </span>
+                          </div>
+                          <div className="relative h-3 bg-slate-200 dark:bg-slate-600 rounded-full overflow-hidden">
+                            <div 
+                              className={`absolute left-0 top-0 h-full rounded-full transition-all ${
+                                isCritical ? 'bg-gradient-to-r from-red-600 to-red-500' :
+                                isLow ? 'bg-gradient-to-r from-yellow-500 to-yellow-400' :
+                                'bg-gradient-to-r from-green-500 to-green-400'
+                              }`}
+                              style={{ width: `${Math.max(percentage, 2)}%` }}
+                            ></div>
+                          </div>
+                          <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1">
+                            <span>{percentage.toFixed(0)}% remaining</span>
+                            <span>Total capacity: {totalLoaded}</span>
+                          </div>
+                        </div>
+
+                        {/* Usage Info */}
+                        <div className="mb-4 p-3 bg-slate-50 dark:bg-slate-600 rounded-lg">
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mb-1">Daily Usage</div>
+                          <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                            {med.dosagePerIntake * (med.times?.length || 0)} {med.medicationForm}s per day
+                          </div>
+                          {remaining > 0 && (
+                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                              Estimated days remaining: ~{Math.floor(remaining / (med.dosagePerIntake * (med.times?.length || 1)))} days
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Quick Refill Buttons */}
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Quick Refill</div>
+                          <div className="grid grid-cols-4 gap-2">
+                            {[10, 20, 30, 50].map(amount => (
+                              <button
+                                key={amount}
+                                onClick={() => handleQuickRefill(med._id, amount)}
+                                className="px-3 py-2 bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 rounded-md hover:bg-cyan-200 dark:hover:bg-cyan-900/50 transition-colors text-sm font-medium"
+                              >
+                                +{amount}
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => {
+                              const amount = prompt(`Enter refill amount for ${med.medicationName}:`)
+                              if (amount && !isNaN(Number(amount)) && Number(amount) > 0) {
+                                handleQuickRefill(med._id, Number(amount))
+                              }
+                            }}
+                            className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700 transition-colors text-sm font-medium"
+                          >
+                            Custom Refill Amount
+                          </button>
+                        </div>
+
+                        {/* Last Refill Info */}
+                        {med.stock?.lastRefilledAt && (
+                          <div className="mt-3 pt-3 border-t dark:border-slate-600 text-xs text-slate-500 dark:text-slate-400">
+                            Last refilled: {new Date(med.stock.lastRefilledAt).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-64 text-center">
+                  <BoxIcon className="w-16 h-16 text-slate-300 dark:text-slate-600 mb-4" />
+                  <div className="text-slate-500 dark:text-slate-400 text-lg font-medium">No medications to refill</div>
+                  <div className="text-slate-400 dark:text-slate-500 text-sm mt-2">Add medicines to get started</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Modal */}
+      {showProfile && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg w-full max-w-2xl my-8 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="sticky top-0 bg-white dark:bg-slate-800 border-b dark:border-slate-700 p-6 rounded-t-xl flex items-center justify-between">
+              <div className="flex-1">
+                {!editingProfile && (
+                  <button
+                    onClick={() => setEditingProfile(true)}
+                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Edit Profile
+                  </button>
+                )}
+              </div>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Patient Profile</h2>
+              <div className="flex-1 flex justify-end">
+                <button onClick={() => { setShowProfile(false); setEditingProfile(false); }} className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-2xl leading-none">×</button>
+              </div>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              {profileData ? (
+                editingProfile ? (
+                  /* Edit Mode */
+                  <div className="space-y-6">
+                    <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4">Basic Information</h3>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Full Name</label>
+                          <input
+                            type="text"
+                            value={profileForm.name}
+                            onChange={(e) => setProfileForm({...profileForm, name: e.target.value})}
+                            className="w-full px-4 py-2 bg-white dark:bg-slate-600 border border-slate-300 dark:border-slate-500 rounded-lg text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Email</label>
+                          <input
+                            type="email"
+                            value={profileForm.email}
+                            disabled
+                            className="w-full px-4 py-2 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-500 rounded-lg text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                          />
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Email cannot be changed</p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Phone Number</label>
+                          <input
+                            type="tel"
+                            value={profileForm.phone}
+                            onChange={(e) => setProfileForm({...profileForm, phone: e.target.value})}
+                            className="w-full px-4 py-2 bg-white dark:bg-slate-600 border border-slate-300 dark:border-slate-500 rounded-lg text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4">Medical Information</h3>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Allergies</label>
+                          <input
+                            type="text"
+                            value={profileForm.allergies}
+                            onChange={(e) => setProfileForm({...profileForm, allergies: e.target.value})}
+                            placeholder="e.g., Penicillin, Peanuts (comma-separated)"
+                            className="w-full px-4 py-2 bg-white dark:bg-slate-600 border border-slate-300 dark:border-slate-500 rounded-lg text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Medical Conditions</label>
+                          <input
+                            type="text"
+                            value={profileForm.illnesses}
+                            onChange={(e) => setProfileForm({...profileForm, illnesses: e.target.value})}
+                            placeholder="e.g., Diabetes, Hypertension (comma-separated)"
+                            className="w-full px-4 py-2 bg-white dark:bg-slate-600 border border-slate-300 dark:border-slate-500 rounded-lg text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Additional Notes</label>
+                          <textarea
+                            value={profileForm.otherNotes}
+                            onChange={(e) => setProfileForm({...profileForm, otherNotes: e.target.value})}
+                            placeholder="Any additional medical information or notes..."
+                            rows={4}
+                            className="w-full px-4 py-2 bg-white dark:bg-slate-600 border border-slate-300 dark:border-slate-500 rounded-lg text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-cyan-500 focus:border-transparent resize-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button
+                        onClick={handleUpdateProfile}
+                        className="flex-1 px-6 py-3 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg font-medium transition-colors"
+                      >
+                        Save Changes
+                      </button>
+                      <button
+                        onClick={() => setEditingProfile(false)}
+                        className="flex-1 px-6 py-3 bg-slate-200 hover:bg-slate-300 dark:bg-slate-600 dark:hover:bg-slate-500 text-slate-900 dark:text-slate-100 rounded-lg font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* View Mode */
+                  <div className="space-y-6">
+                  {/* User Info Card */}
+                  <div className="bg-gradient-to-br from-cyan-50 to-blue-50 dark:from-cyan-900/20 dark:to-blue-900/20 rounded-lg p-6 border border-cyan-200 dark:border-cyan-700">
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="w-20 h-20 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 flex items-center justify-center text-white text-3xl font-bold">
+                        {(profileData.user?.name || 'U')[0]?.toUpperCase()}
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{profileData.user?.name || 'Unknown'}</h3>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 capitalize">{profileData.user?.role || 'Patient'}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contact Information */}
+                  <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                    <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
+                      <span className="text-cyan-600 dark:text-cyan-400">📧</span>
+                      Contact Information
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-600 dark:text-slate-400">Email</span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{profileData.user?.email || 'Not provided'}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-600 dark:text-slate-400">Phone</span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{profileData.user?.phone || 'Not provided'}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-600 dark:text-slate-400">Status</span>
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          profileData.user?.isActive 
+                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' 
+                            : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                        }`}>
+                          {profileData.user?.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Device Information */}
+                  {profileData.device && (
+                    <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
+                        <span className="text-cyan-600 dark:text-cyan-400">📱</span>
+                        Device Information
+                      </h3>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-slate-600 dark:text-slate-400">Device ID</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100 font-mono">{profileData.device.deviceId || 'Not assigned'}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-slate-600 dark:text-slate-400">Slots</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{profileData.device.slotCount || 0} slots</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-slate-600 dark:text-slate-400">Timezone</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{profileData.device.timezone || 'UTC'}</span>
+                        </div>
+                        {profileData.device.batteryLevel !== undefined && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-slate-600 dark:text-slate-400">Battery</span>
+                            <div className="flex items-center gap-2">
+                              <div className="w-24 h-2 bg-slate-200 dark:bg-slate-600 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full ${
+                                    profileData.device.batteryLevel > 50 ? 'bg-green-500' :
+                                    profileData.device.batteryLevel > 20 ? 'bg-yellow-500' :
+                                    'bg-red-500'
+                                  }`}
+                                  style={{ width: `${profileData.device.batteryLevel}%` }}
+                                ></div>
+                              </div>
+                              <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{profileData.device.batteryLevel}%</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Medical Profile */}
+                  {profileData.patient?.medicalProfile && (
+                    <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                      <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
+                        <span className="text-cyan-600 dark:text-cyan-400">🏥</span>
+                        Medical Profile
+                      </h3>
+                      <div className="space-y-4">
+                        {profileData.patient.medicalProfile.allergies && profileData.patient.medicalProfile.allergies.length > 0 && (
+                          <div>
+                            <div className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Allergies</div>
+                            <div className="flex flex-wrap gap-2">
+                              {profileData.patient.medicalProfile.allergies.map((allergy: string, idx: number) => (
+                                <span key={idx} className="px-3 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-full text-sm">
+                                  {allergy}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {profileData.patient.medicalProfile.illnesses && profileData.patient.medicalProfile.illnesses.length > 0 && (
+                          <div>
+                            <div className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Medical Conditions</div>
+                            <div className="space-y-2">
+                              {profileData.patient.medicalProfile.illnesses.map((illness: any, idx: number) => (
+                                <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-600 rounded-lg">
+                                  <span className="text-sm text-slate-900 dark:text-slate-100">{illness.name}</span>
+                                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    illness.status === 'resolved' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' :
+                                    illness.status === 'under_control' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' :
+                                    'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                                  }`}>
+                                    {illness.status?.replace('_', ' ') || 'Ongoing'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {profileData.patient.medicalProfile.otherNotes && (
+                          <div>
+                            <div className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Additional Notes</div>
+                            <p className="text-sm text-slate-600 dark:text-slate-400 p-3 bg-slate-50 dark:bg-slate-600 rounded-lg">
+                              {profileData.patient.medicalProfile.otherNotes}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Account Info */}
+                  <div className="bg-white dark:bg-slate-700 rounded-lg p-6 border dark:border-slate-600">
+                    <h3 className="font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
+                      <span className="text-cyan-600 dark:text-cyan-400">📅</span>
+                      Account Information
+                    </h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-600 dark:text-slate-400">Member Since</span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {new Date(profileData.user?.createdAt).toLocaleDateString('en-US', { 
+                            month: 'long', 
+                            day: 'numeric', 
+                            year: 'numeric' 
+                          })}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-600 dark:text-slate-400">Last Updated</span>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {new Date(profileData.user?.updatedAt).toLocaleDateString('en-US', { 
+                            month: 'long', 
+                            day: 'numeric', 
+                            year: 'numeric' 
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                )
+              ) : (
+                <div className="flex items-center justify-center h-64">
+                  <div className="text-slate-500 dark:text-slate-400">Loading profile...</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      </>
+    )}
     </div>
   )
 }
