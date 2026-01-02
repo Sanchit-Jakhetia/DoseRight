@@ -3,10 +3,11 @@ import axios from 'axios'
 import AdherenceChart from './components/AdherenceChart'
 import AuthPage from './pages/AuthPage'
 import PatientDetails from './pages/PatientDetails'
+import PatientDashboard from './pages/PatientDashboard'
 import CaretakerDashboard from './pages/CaretakerDashboard'
 import DoctorDashboard from './pages/DoctorDashboard'
 import AdminDashboard from './pages/AdminDashboard'
-import { HomeIcon, PlusIcon, ClockIcon, BoxIcon, PillIcon, EditIcon, TrashIcon, WarningIcon, SunIcon, MoonIcon } from './components/Icons'
+import { HomeIcon, PlusIcon, ClockIcon, BoxIcon, PillIcon, EditIcon, TrashIcon, WarningIcon, SunIcon, MoonIcon, UserIcon } from './components/Icons'
 
 type Medicine = {
   id: number
@@ -496,154 +497,20 @@ export default function App() {
       ) : user?.role === 'doctor' ? (
         <DoctorDashboard user={user} />
       ) : (
-        <>
-      <div className="grid grid-cols-12 gap-6">
-        <div className="col-span-12">
-          <div className="grid grid-cols-4 gap-4">
-            <div onClick={openProfilePanel} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <HomeIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Profile</div> </div>
-            <div onClick={() => setShowAddMedicine(true)} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <PlusIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Add Medicine</div> </div>
-            <div onClick={fetchHistory} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <ClockIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">History</div> </div>
-            <div onClick={openRefillPanel} className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"> <BoxIcon className="w-6 h-6 text-slate-700"/> <div className="mt-2">Refill</div> </div>
-          </div>
-        </div>
-
-        <div className="col-span-8">
-          <div className="card">
-            <h2 className="font-semibold mb-2">Today's Schedule</h2>
-            <p className="text-sm text-slate-500 mb-4">Your medicine schedule for today</p>
-            <div className="space-y-3">
-              {(Array.isArray(schedule) && schedule.length > 0) ? schedule.map((s: any) => {
-                const med = s.medicationPlanId;
-                const scheduledTime = new Date(s.scheduledAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                const statusDisplay = s.status === 'taken' ? 'Taken' : s.status === 'missed' ? 'Missed' : s.status === 'pending' ? 'Pending' : s.status.charAt(0).toUpperCase() + s.status.slice(1);
-                
-                return (
-                  <div key={s._id} className="schedule-item">
-                    <div className="flex items-center gap-4">
-                      <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center text-cyan-600 border border-cyan-100"><PillIcon className="w-5 h-5"/></div>
-                      <div>
-                        <div className="font-medium">{med?.medicationName || 'Unknown Medicine'}</div>
-                        <div className="text-sm text-slate-500">{med?.medicationStrength || ''} {med?.medicationForm || ''}</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm text-slate-600"><ClockIcon className="w-4 h-4 inline-block mr-1 text-slate-500"/>{scheduledTime}</div>
-                      <div className="mt-2 flex gap-2">
-                        <button 
-                          onClick={() => handleMarkDose(s._id, s, 'taken')}
-                          disabled={s.status === 'taken' || s.status === 'missed'}
-                          className={`small-pill ${s.status === 'taken' ? 'status-taken cursor-not-allowed' : s.status === 'missed' ? 'status-missed cursor-not-allowed' : 'status-upcoming hover:opacity-80'}`}
-                        >
-                          {statusDisplay}
-                        </button>
-                        <button
-                          onClick={() => handleMarkDose(s._id, s, 'missed')}
-                          disabled={s.status === 'taken' || s.status === 'missed'}
-                          className="px-3 py-1 text-sm rounded-md bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Miss
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }) : (
-                <div className="text-center text-slate-400 py-8">No doses scheduled for today</div>
-              )}
-            </div>
-          </div>
-
-          <div className="card mt-6">
-            <h2 className="font-semibold mb-2">Medicine Overview</h2>
-            <p className="text-sm text-slate-500 mb-4">All your medicines</p>
-            <div className="grid grid-cols-2 gap-4">
-              {(Array.isArray(medicines) && medicines.length > 0) ? medicines.map((m: any) => {
-                const timesDisplay = m.times?.join(', ') || 'Not set';
-                const remaining = m.stock?.remaining || 0;
-                
-                return (
-                  <div key={m._id} className="medicine-card border rounded-lg p-4 bg-white dark:bg-slate-800 relative group hover:shadow-md transition-shadow">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="font-medium text-slate-900 dark:text-slate-100">{m.medicationName}</div>
-                        <div className="text-sm text-slate-500 dark:text-slate-400">{m.medicationStrength} {m.medicationForm} • {m.dosagePerIntake}x per dose</div>
-                        <div className="text-xs text-slate-400 dark:text-slate-500 mt-1">Times: {timesDisplay}</div>
-                        <div className="text-xs mt-2">
-                          {remaining < 10 ? (
-                            <div className="flex items-center text-red-700 dark:text-red-400">
-                              <WarningIcon className="w-4 h-4 inline-block mr-1" />
-                              <span className="font-medium">{remaining} remaining - Refill needed!</span>
-                            </div>
-                          ) : (
-                            <div className="text-slate-400 dark:text-slate-500">{remaining} tablets remaining</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className={`text-xs px-2 py-1 rounded ${m.active ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'}`}>
-                          {m.active ? 'Active' : 'Inactive'}
-                        </div>
-                      </div>
-                    </div>
-                    {remaining < 10 && (
-                      <button 
-                        onClick={() => handleRefill(m._id)}
-                        className="mt-3 w-full py-2 text-sm bg-cyan-600 hover:bg-cyan-700 text-white rounded-md transition-colors"
-                      >
-                        Request Refill
-                      </button>
-                    )}
-                  </div>
-                );
-              }) : (
-                <div className="col-span-2 text-center text-slate-400 py-8">No medications found</div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <aside className="col-span-4 space-y-6">
-          <div className="card">
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <h3 className="font-semibold">Adherence</h3>
-                <p className="text-sm text-slate-500">Your medication adherence rate</p>
-              </div>
-            </div>
-            <div className="mt-4">
-                {adherence ? <AdherenceChart taken={adherence.taken} missed={adherence.missed} /> : <div>Loading chart…</div>}
-            </div>
-            <div className="mt-4 space-y-2">
-              <div className="space-y-2">
-                <div className="flex justify-between items-center bg-green-50 dark:bg-green-900/20 p-3 rounded-md">
-                  <div className="text-sm text-green-800 dark:text-green-300">Today's Doses Taken</div>
-                  <div className="font-medium text-green-800 dark:text-green-300">{summary?.dosesTaken ?? 0}</div>
-                </div>
-                <div className="flex justify-between items-center bg-red-50 dark:bg-red-900/20 p-3 rounded-md">
-                  <div className="text-sm text-red-800 dark:text-red-300">Today's Doses Missed</div>
-                  <div className="font-medium text-red-800 dark:text-red-300">{summary?.dosesMissed ?? 0}</div>
-                </div>
-                <div className="flex justify-between items-center bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md">
-                  <div className="text-sm text-blue-800 dark:text-blue-300">Overall Adherence Rate</div>
-                  <div className="font-medium text-blue-800 dark:text-blue-300">{adherence?.rate ?? 0}%</div>
-                </div>
-                <div className="flex justify-between items-center bg-purple-50 dark:bg-purple-900/20 p-3 rounded-md">
-                  <div className="text-sm text-purple-800 dark:text-purple-300">Total Doses Tracked</div>
-                  <div className="font-medium text-purple-800 dark:text-purple-300">{(adherence?.taken || 0) + (adherence?.missed || 0)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card flex items-center justify-center bg-gradient-to-r from-cyan-400 to-blue-600 text-white h-40">
-            <div className="text-center">
-              <div className="text-3xl font-bold">{summary?.activeMedicines ?? '—'}</div>
-              <div className="mt-1">Active Medicines</div>
-            </div>
-          </div>
-        </aside>
-      </div>
-      </>
+        <PatientDashboard
+          user={user}
+          medicines={medicines}
+          schedule={schedule}
+          adherence={adherence}
+          summary={summary}
+          profileData={profileData}
+          onOpenProfile={openProfilePanel}
+          onOpenAddMedicine={() => setShowAddMedicine(true)}
+          onOpenHistory={fetchHistory}
+          onOpenRefill={openRefillPanel}
+          onMarkDose={handleMarkDose}
+          onRefill={handleRefill}
+        />
       )}
 
       {/* Confirmation Dialog */}
@@ -1426,6 +1293,24 @@ export default function App() {
                           <span className="text-sm text-slate-600 dark:text-slate-400">Timezone</span>
                           <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{profileData.device.timezone || 'UTC'}</span>
                         </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-slate-600 dark:text-slate-400">Status</span>
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            profileData.device.lastStatus === 'online' 
+                              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' 
+                              : profileData.device.lastStatus === 'offline'
+                              ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                              : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                          }`}>
+                            {profileData.device.lastStatus?.toUpperCase() || 'UNKNOWN'}
+                          </span>
+                        </div>
+                        {profileData.device.lastHeartbeatAt && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-slate-600 dark:text-slate-400">Last Connected</span>
+                            <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{new Date(profileData.device.lastHeartbeatAt).toLocaleString()}</span>
+                          </div>
+                        )}
                         {profileData.device.batteryLevel !== undefined && (
                           <div className="flex justify-between items-center">
                             <span className="text-sm text-slate-600 dark:text-slate-400">Battery</span>

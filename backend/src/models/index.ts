@@ -32,7 +32,7 @@ export async function dropDatabase(): Promise<void> {
 
 // Export all models
 export { User, type IUser, type UserRole } from './User';
-export { Patient, type IPatient } from './Medicine';
-export { Device, type IDevice } from './Schedule';
+export { Patient, type IPatient } from './Patient';
+export { Device, type IDevice } from './Device';
 export { MedicationPlan, type IMedicationPlan } from './MedicationPlan';
 export { DoseLog, type IDoseLog, type DoseStatus } from './DoseLog';
