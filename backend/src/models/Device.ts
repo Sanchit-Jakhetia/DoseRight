@@ -10,6 +10,12 @@ export interface IDevice extends Document {
   lastStatus?: 'online' | 'offline' | 'error';
   batteryLevel?: number;
   wifiStrength?: number;
+  wifiConnected?: boolean;
+  firmwareVersion?: string;
+  uptimeSeconds?: number;
+  storageFreeKb?: number;
+  temperatureC?: number;
+  lastError?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +44,12 @@ const deviceSchema = new Schema<IDevice>(
 
     batteryLevel: { type: Number, min: 0, max: 100 },
     wifiStrength: { type: Number },
+    wifiConnected: { type: Boolean },
+    firmwareVersion: { type: String },
+    uptimeSeconds: { type: Number, min: 0 },
+    storageFreeKb: { type: Number, min: 0 },
+    temperatureC: { type: Number },
+    lastError: { type: String, default: null },
   },
   { timestamps: true }
 );

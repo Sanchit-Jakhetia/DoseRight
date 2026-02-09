@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import AdherenceChart from '../components/AdherenceChart'
-import { PlusIcon, ClockIcon, BoxIcon, PillIcon, WarningIcon, UserIcon } from '../components/Icons'
+import { PlusIcon, ClockIcon, BoxIcon, PillIcon, WarningIcon, UserIcon, EditIcon } from '../components/Icons'
 
 type Props = {
   user: any
@@ -16,6 +16,7 @@ type Props = {
   onOpenRefill: () => void
   onMarkDose: (doseId: string, dose: any, action: 'taken' | 'missed') => void
   onRefill: (medicationId: string) => void
+  onEditMedicine: (medicine: any) => void
 }
 
 export default function PatientDashboard({
@@ -31,7 +32,25 @@ export default function PatientDashboard({
   onOpenRefill,
   onMarkDose,
   onRefill,
+  onEditMedicine,
 }: Props) {
+  const formatDateDMY = (value?: string | number | Date) => {
+    if (!value) return '—'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '—'
+    const day = String(date.getDate()).padStart(2, '0')
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const year = date.getFullYear()
+    return `${day}/${month}/${year}`
+  }
+
+  const formatTime = (value?: string | number | Date) => {
+    if (!value) return '—'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '—'
+    return date.toLocaleTimeString()
+  }
+
   return (
     <>
       <div className="grid grid-cols-12 gap-6">
@@ -77,7 +96,7 @@ export default function PatientDashboard({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 {/* Device Name */}
                 <div className="bg-white dark:bg-slate-800/50 rounded-lg p-4 border border-cyan-100 dark:border-cyan-800">
                   <div className="text-xs text-slate-600 dark:text-slate-400 uppercase tracking-wide">Device Name</div>
@@ -107,55 +126,19 @@ export default function PatientDashboard({
                   )}
                 </div>
 
-                {/* WiFi Strength */}
-                <div className="bg-white dark:bg-slate-800/50 rounded-lg p-4 border border-cyan-100 dark:border-cyan-800">
-                  <div className="text-xs text-slate-600 dark:text-slate-400 uppercase tracking-wide">WiFi Signal</div>
-                  <div className="text-lg font-semibold text-slate-900 dark:text-slate-100 mt-1 flex items-center gap-1">
-                    {profileData?.device?.wifiStrength ? Math.abs(profileData.device.wifiStrength) + ' dBm' : '—'}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-500 mt-1 flex gap-1">
-                    {profileData?.device?.wifiStrength ? (
-                      <>
-                        {Math.abs(profileData.device.wifiStrength) <= 50
-                          ? '📶 Strong'
-                          : Math.abs(profileData.device.wifiStrength) <= 70
-                            ? '📶 Good'
-                            : Math.abs(profileData.device.wifiStrength) <= 85
-                              ? '📶 Fair'
-                              : '📶 Weak'}
-                      </>
-                    ) : (
-                      '—'
-                    )}
-                  </div>
-                </div>
-
                 {/* Last Connected */}
                 <div className="bg-white dark:bg-slate-800/50 rounded-lg p-4 border border-cyan-100 dark:border-cyan-800">
                   <div className="text-xs text-slate-600 dark:text-slate-400 uppercase tracking-wide">Last Connected</div>
                   <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mt-1">
                     {profileData?.device?.lastHeartbeatAt ? (
                       <>
-                        <div>{new Date(profileData.device.lastHeartbeatAt).toLocaleDateString()}</div>
-                        <div className="text-xs text-slate-600 dark:text-slate-400">{new Date(profileData.device.lastHeartbeatAt).toLocaleTimeString()}</div>
+                        <div>{formatDateDMY(profileData.device.lastHeartbeatAt)}</div>
+                        <div className="text-xs text-slate-600 dark:text-slate-400">{formatTime(profileData.device.lastHeartbeatAt)}</div>
                       </>
                     ) : (
                       '—'
                     )}
                   </div>
-                </div>
-              </div>
-
-              {/* Device Details Row */}
-              <div className="mt-4 grid grid-cols-3 gap-4 text-xs text-slate-600 dark:text-slate-400 pt-4 border-t border-cyan-100 dark:border-cyan-800">
-                <div>
-                  <span className="font-medium">Slots:</span> {profileData?.device?.slotCount || 0} available
-                </div>
-                <div>
-                  <span className="font-medium">Timezone:</span> {profileData?.device?.timezone || 'UTC'}
-                </div>
-                <div>
-                  <span className="font-medium">Registered:</span> {profileData?.device?.createdAt ? new Date(profileData.device.createdAt).toLocaleDateString() : '—'}
                 </div>
               </div>
             </div>
@@ -171,7 +154,14 @@ export default function PatientDashboard({
                 schedule.map((s: any) => {
                   const med = s.medicationPlanId
                   const scheduledTime = new Date(s.scheduledAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-                  const statusDisplay = s.status === 'taken' ? 'Taken' : s.status === 'missed' ? 'Missed' : s.status === 'pending' ? 'Pending' : s.status.charAt(0).toUpperCase() + s.status.slice(1)
+                  const statusDisplay = s.status === 'taken'
+                    ? 'Taken'
+                    : s.status === 'missed' || s.status === 'skipped'
+                      ? 'Missed'
+                      : s.status === 'pending'
+                        ? 'Pending'
+                        : s.status.charAt(0).toUpperCase() + s.status.slice(1)
+                  const isFinal = s.status === 'taken' || s.status === 'missed' || s.status === 'skipped'
 
                   return (
                     <div key={s._id} className="schedule-item">
@@ -192,14 +182,14 @@ export default function PatientDashboard({
                         <div className="mt-2 flex gap-2">
                           <button
                             onClick={() => onMarkDose(s._id, s, 'taken')}
-                            disabled={s.status === 'taken' || s.status === 'missed'}
-                            className={`small-pill ${s.status === 'taken' ? 'status-taken cursor-not-allowed' : s.status === 'missed' ? 'status-missed cursor-not-allowed' : 'status-upcoming hover:opacity-80'}`}
+                            disabled={isFinal}
+                            className={`small-pill ${s.status === 'taken' ? 'status-taken cursor-not-allowed' : s.status === 'missed' || s.status === 'skipped' ? 'status-missed cursor-not-allowed' : 'status-upcoming hover:opacity-80'}`}
                           >
                             {statusDisplay}
                           </button>
                           <button
                             onClick={() => onMarkDose(s._id, s, 'missed')}
-                            disabled={s.status === 'taken' || s.status === 'missed'}
+                            disabled={isFinal}
                             className="px-3 py-1 text-sm rounded-md bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             Miss
@@ -246,6 +236,13 @@ export default function PatientDashboard({
                           <div className={`text-xs px-2 py-1 rounded ${m.active ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'}`}>
                             {m.active ? 'Active' : 'Inactive'}
                           </div>
+                          <button
+                            onClick={() => onEditMedicine(m)}
+                            className="mt-2 inline-flex items-center gap-1 text-xs text-cyan-600 dark:text-cyan-300 hover:text-cyan-700 dark:hover:text-cyan-200"
+                          >
+                            <EditIcon className="w-3.5 h-3.5" />
+                            Edit
+                          </button>
                         </div>
                       </div>
                       {remaining < 10 && (

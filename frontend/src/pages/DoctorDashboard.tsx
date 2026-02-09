@@ -1,37 +1,53 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
 import { ClockIcon, BoxIcon, PillIcon, WarningIcon, HomeIcon } from '../components/Icons'
-
-// Doctor dashboard with a similar visual style.
-// Uses mock data placeholders; wire to real doctor APIs when available.
-
-const mockPatients = [
-  { id: 'p1', name: 'Ravi Kumar', diagnosis: 'Type 2 Diabetes', lastVisit: 'Nov 28', nextVisit: 'Dec 12', adherence: 92 },
-  { id: 'p2', name: 'Anita Sharma', diagnosis: 'Hypertension', lastVisit: 'Nov 20', nextVisit: 'Dec 08', adherence: 78 },
-  { id: 'p3', name: 'Rahul Verma', diagnosis: 'Cardiac Rehab', lastVisit: 'Nov 30', nextVisit: 'Dec 15', adherence: 85 },
-]
-
-const clinicalTasks = [
-  { id: 't1', patient: 'Anita Sharma', task: 'Review BP logs', due: 'Today', priority: 'high' },
-  { id: 't2', patient: 'Ravi Kumar', task: 'Adjust Metformin dose', due: 'Tomorrow', priority: 'medium' },
-  { id: 't3', patient: 'Rahul Verma', task: 'Order lipid panel', due: 'Dec 10', priority: 'low' },
-]
-
-const refillAlerts = [
-  { id: 'r1', name: 'Metformin 500mg', patient: 'Ravi Kumar', remaining: '4 days', severity: 'medium' },
-  { id: 'r2', name: 'Amlodipine 5mg', patient: 'Anita Sharma', remaining: '2 days', severity: 'high' },
-]
-
-const activityLog = [
-  { id: 'a1', time: '07:10 AM', text: 'Ravi took Metformin 500mg (On time)' },
-  { id: 'a2', time: '07:30 AM', text: 'Anita missed Amlodipine 5mg (Follow-up needed)' },
-  { id: 'a3', time: '06:50 AM', text: 'Rahul took Lisinopril 10mg (On time)' },
-]
 
 type Props = { user: any }
 
 export default function DoctorDashboard({ user }: Props) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [overview, setOverview] = useState<any>(null)
+
+  const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8080'
+
+  useEffect(() => {
+    let active = true
+    const fetchOverview = async () => {
+      if (!user?.token) return
+      setLoading(true)
+      setError(null)
+      try {
+        const headers = { Authorization: `Bearer ${user.token}` }
+        const response = await axios.get(`${API_BASE}/api/dashboard/doctor/overview`, { headers })
+        if (active) setOverview(response.data)
+      } catch (err: any) {
+        if (active) setError(err?.response?.data?.message || 'Failed to load doctor data')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    fetchOverview()
+    return () => { active = false }
+  }, [user, API_BASE])
+
+  const summary = overview?.summary || { patientCount: 0, dosesToday: 0, avgAdherence: 0 }
+  const patients = overview?.patients || []
+  const clinicalTasks = overview?.clinicalTasks || []
+  const refillAlerts = overview?.refillAlerts || []
+  const activityLog = overview?.activity || []
+
+  const isEmpty = useMemo(() => !loading && !error && patients.length === 0, [loading, error, patients.length])
+
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="card bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300">
+          {error}
+        </div>
+      )}
+
       {/* Top actions */}
       <div className="grid grid-cols-4 gap-4">
         <div className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
@@ -56,13 +72,13 @@ export default function DoctorDashboard({ user }: Props) {
       <div className="grid grid-cols-4 gap-4">
         <div className="card">
           <div className="text-sm text-slate-500">Patients</div>
-          <div className="text-2xl font-semibold mt-1">{mockPatients.length}</div>
+          <div className="text-2xl font-semibold mt-1">{summary.patientCount}</div>
           <div className="text-xs text-green-600 mt-1">Active</div>
         </div>
         <div className="card">
-          <div className="text-sm text-slate-500">Visits today</div>
-          <div className="text-2xl font-semibold mt-1">6</div>
-          <div className="text-xs text-slate-500 mt-1">2 pending</div>
+          <div className="text-sm text-slate-500">Doses today</div>
+          <div className="text-2xl font-semibold mt-1">{summary.dosesToday}</div>
+          <div className="text-xs text-slate-500 mt-1">Across assigned patients</div>
         </div>
         <div className="card">
           <div className="text-sm text-slate-500">Refill alerts</div>
@@ -71,7 +87,7 @@ export default function DoctorDashboard({ user }: Props) {
         </div>
         <div className="card">
           <div className="text-sm text-slate-500">Avg adherence</div>
-          <div className="text-2xl font-semibold mt-1">84%</div>
+          <div className="text-2xl font-semibold mt-1">{summary.avgAdherence}%</div>
           <div className="text-xs text-slate-500 mt-1">Past 7 days</div>
         </div>
       </div>
@@ -87,12 +103,18 @@ export default function DoctorDashboard({ user }: Props) {
             <div className="text-xs text-slate-500">Adherence & visits</div>
           </div>
           <div className="divide-y divide-slate-200 dark:divide-slate-700">
-            {mockPatients.map((p) => (
+            {loading && (
+              <div className="py-6 text-center text-slate-400">Loading patients...</div>
+            )}
+            {isEmpty && (
+              <div className="py-6 text-center text-slate-400">No patients assigned</div>
+            )}
+            {!loading && patients.map((p: any) => (
               <div key={p.id} className="py-3 flex items-center justify-between">
                 <div>
                   <div className="font-medium text-slate-900 dark:text-slate-100">{p.name}</div>
                   <div className="text-xs text-slate-500">{p.diagnosis}</div>
-                  <div className="text-[11px] text-slate-500">Last: {p.lastVisit} · Next: {p.nextVisit}</div>
+                  <div className="text-[11px] text-slate-500">Last: {p.lastVisit || '—'} · Next: {p.nextVisit || '—'}</div>
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="w-28 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -110,7 +132,10 @@ export default function DoctorDashboard({ user }: Props) {
           <h2 className="font-semibold mb-2">Clinical Tasks</h2>
           <p className="text-sm text-slate-500 mb-3">Today & upcoming</p>
           <div className="space-y-3">
-            {clinicalTasks.map((t) => (
+            {clinicalTasks.length === 0 && !loading && (
+              <div className="text-center text-slate-400 py-6">No tasks right now</div>
+            )}
+            {clinicalTasks.map((t: any) => (
               <div key={t.id} className={`p-3 rounded-lg border ${t.priority === 'high' ? 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' : t.priority === 'medium' ? 'border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50'}`}>
                 <div className="flex items-center justify-between">
                   <div>
@@ -136,8 +161,11 @@ export default function DoctorDashboard({ user }: Props) {
             <span className="text-xs text-slate-500">Action required</span>
           </div>
           <div className="space-y-3">
-            {refillAlerts.map((r) => (
-              <div key={r.id} className={`p-3 rounded-lg border ${r.severity === 'high' ? 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' : 'border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10'}`}>
+            {refillAlerts.length === 0 && !loading && (
+              <div className="text-center text-slate-400 py-6">No refill alerts</div>
+            )}
+            {refillAlerts.map((r: any) => (
+              <div key={r.id} className={`p-3 rounded-lg border ${r.severity === 'high' ? 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' : r.severity === 'medium' ? 'border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50'}`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-medium text-slate-900 dark:text-slate-100">{r.name}</div>
@@ -160,9 +188,12 @@ export default function DoctorDashboard({ user }: Props) {
             <span className="text-xs text-slate-500">Today</span>
           </div>
           <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-            {activityLog.map((log) => (
+            {activityLog.length === 0 && !loading && (
+              <div className="text-center text-slate-400 py-6">No recent activity</div>
+            )}
+            {activityLog.map((log: any) => (
               <div key={log.id} className="flex items-center justify-between bg-slate-50 dark:bg-slate-700/60 rounded-lg px-3 py-2">
-                <div className="text-xs text-slate-500 w-20">{log.time}</div>
+                <div className="text-xs text-slate-500 w-20">{new Date(log.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
                 <div className="flex-1 text-sm text-slate-800 dark:text-slate-100">{log.text}</div>
               </div>
             ))}

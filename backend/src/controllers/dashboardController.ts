@@ -1,6 +1,375 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
+import { Types } from 'mongoose';
 import { DoseLog, MedicationPlan, Patient, User, Device, type IDoseLog } from '../models';
+
+export const getCaretakerOverview = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const caretakerId = req.userId;
+    const patients = await Patient.find({
+      'caretakers.userId': caretakerId,
+      'caretakers.approved': true,
+    })
+      .populate({ path: 'userId', select: 'name' })
+      .lean()
+      .exec();
+
+    if (!patients.length) {
+      res.status(200).json({
+        patients: [],
+        schedule: [],
+        refillAlerts: [],
+        activity: [],
+        summary: {
+          patientCount: 0,
+          dosesToday: 0,
+          pendingToday: 0,
+          avgAdherence: 0,
+        },
+      });
+      return;
+    }
+
+    const patientIds = patients.map((p) => p._id);
+    const patientNameMap = new Map<string, string>();
+    for (const p of patients) {
+      const user = p.userId as unknown as { name?: string } | null;
+      patientNameMap.set(p._id.toString(), user?.name || 'Patient');
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+    const dayOfWeek = todayStart.getDay();
+    const adjustedDay = dayOfWeek === 0 ? 7 : dayOfWeek;
+
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const recentLogs = await DoseLog.find({
+      patientId: { $in: patientIds },
+      scheduledAt: { $gte: sevenDaysAgo },
+    })
+      .populate({ path: 'medicationPlanId', select: 'medicationName medicationStrength medicationForm' })
+      .sort({ scheduledAt: -1 })
+      .lean()
+      .exec();
+
+    const adherenceByPatient = new Map<string, { taken: number; missed: number }>();
+    for (const log of recentLogs as any[]) {
+      const key = log.patientId.toString();
+      const entry = adherenceByPatient.get(key) || { taken: 0, missed: 0 };
+      if (log.status === 'taken') entry.taken += 1;
+      if (log.status === 'missed' || log.status === 'skipped') entry.missed += 1;
+      adherenceByPatient.set(key, entry);
+    }
+
+    const medicationPlans = await MedicationPlan.find({
+      patientId: { $in: patientIds },
+      active: true,
+    }).lean();
+
+    const todayDoseLogs = await DoseLog.find({
+      patientId: { $in: patientIds },
+      scheduledAt: { $gte: todayStart, $lt: todayEnd },
+    })
+      .populate({ path: 'medicationPlanId', select: 'medicationName medicationStrength medicationForm' })
+      .lean();
+
+    const doseLogMap = new Map<string, any>();
+    for (const log of todayDoseLogs as any[]) {
+      const key = `${log.patientId.toString()}_${log.medicationPlanId?.toString?.() || log.medicationPlanId}_${new Date(log.scheduledAt).getTime()}`;
+      doseLogMap.set(key, log);
+    }
+
+    const scheduleAll: Array<{ patientId: string; scheduledAt: Date; status: string; medName: string }> = [];
+
+    for (const plan of medicationPlans as any[]) {
+      const times = Array.isArray(plan.times) ? plan.times : [];
+      const daysOfWeek = Array.isArray(plan.daysOfWeek) ? plan.daysOfWeek.map((d: any) => Number(d)).filter((d: number) => !Number.isNaN(d)) : [];
+
+      if (times.length === 0 || daysOfWeek.length === 0) {
+        scheduleAll.push({
+          patientId: plan.patientId.toString(),
+          scheduledAt: todayStart,
+          status: 'pending',
+          medName: plan.medicationName || 'Unknown',
+        });
+        continue;
+      }
+
+      if (!daysOfWeek.includes(adjustedDay)) {
+        continue;
+      }
+
+      for (const time of times) {
+        const [hours, minutes] = String(time).split(':').map(Number);
+        if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+          continue;
+        }
+
+        const scheduledAt = new Date(todayStart);
+        scheduledAt.setHours(hours, minutes, 0, 0);
+        const key = `${plan.patientId.toString()}_${plan._id.toString()}_${scheduledAt.getTime()}`;
+        const log = doseLogMap.get(key);
+        scheduleAll.push({
+          patientId: plan.patientId.toString(),
+          scheduledAt,
+          status: log?.status || 'pending',
+          medName: plan.medicationName || 'Unknown',
+        });
+      }
+    }
+
+    scheduleAll.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+
+    const nextDoseMap = new Map<string, any>();
+    for (const item of scheduleAll) {
+      if (item.status !== 'pending') continue;
+      if (!nextDoseMap.has(item.patientId)) {
+        nextDoseMap.set(item.patientId, {
+          time: item.scheduledAt,
+          medicine: item.medName,
+        });
+      }
+    }
+
+    const schedule = scheduleAll
+      .slice(0, 20)
+      .map((item) => ({
+        id: `${item.patientId}_${item.scheduledAt.getTime()}`,
+        patient: patientNameMap.get(item.patientId) || 'Patient',
+        time: item.scheduledAt,
+        med: item.medName,
+        status: item.status,
+      }));
+
+    const refillThreshold = 5;
+    const refillPlans = await MedicationPlan.find({
+      patientId: { $in: patientIds },
+      active: true,
+      'stock.remaining': { $lte: refillThreshold },
+    })
+      .lean()
+      .exec();
+
+    const refillAlerts = refillPlans.map((plan) => {
+      const remaining = plan.stock?.remaining ?? 0;
+      return {
+        id: plan._id.toString(),
+        name: `${plan.medicationName} ${plan.medicationStrength || ''}`.trim(),
+        patient: patientNameMap.get(plan.patientId.toString()) || 'Patient',
+        remaining,
+        severity: remaining <= 2 ? 'high' : 'medium',
+      };
+    });
+
+    const activity = recentLogs.slice(0, 10).map((log: any) => {
+      const plan = log.medicationPlanId as any;
+      const patientName = patientNameMap.get(log.patientId.toString()) || 'Patient';
+      const statusLabel = log.status === 'taken' ? 'took' : log.status === 'missed' || log.status === 'skipped' ? 'missed' : log.status;
+      return {
+        id: log._id.toString(),
+        time: log.scheduledAt,
+        text: `${patientName} ${statusLabel} ${plan?.medicationName || 'medicine'}`,
+      };
+    });
+
+    let adherenceTotal = 0;
+    let adherenceCount = 0;
+    const patientsSummary = patients.map((p) => {
+      const key = p._id.toString();
+      const adherence = adherenceByPatient.get(key) || { taken: 0, missed: 0 };
+      const total = adherence.taken + adherence.missed;
+      const rate = total > 0 ? Math.round((adherence.taken / total) * 100) : 0;
+      adherenceTotal += rate;
+      adherenceCount += 1;
+
+      const nextDose = nextDoseMap.get(key);
+      return {
+        id: key,
+        name: patientNameMap.get(key) || 'Patient',
+        nextDoseTime: nextDose?.time || null,
+        nextDoseMedicine: nextDose?.medicine || null,
+        adherence: rate,
+        status: rate >= 85 ? 'On Track' : 'Needs Attention',
+        alerts: adherence.missed > 0 ? 1 : 0,
+      };
+    });
+
+    const avgAdherence = adherenceCount > 0 ? Math.round(adherenceTotal / adherenceCount) : 0;
+
+    res.status(200).json({
+      patients: patientsSummary,
+      schedule,
+      refillAlerts,
+      activity,
+      summary: {
+        patientCount: patientsSummary.length,
+        dosesToday: scheduleAll.length,
+        pendingToday: scheduleAll.filter((item) => item.status === 'pending').length,
+        avgAdherence,
+      },
+    });
+  } catch (error) {
+    console.error('Caretaker overview error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const getDoctorOverview = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const doctorId = req.userId;
+    const patients = await Patient.find({ doctors: doctorId })
+      .populate({ path: 'userId', select: 'name' })
+      .lean()
+      .exec();
+
+    if (!patients.length) {
+      res.status(200).json({
+        patients: [],
+        clinicalTasks: [],
+        refillAlerts: [],
+        activity: [],
+        summary: {
+          patientCount: 0,
+          dosesToday: 0,
+          avgAdherence: 0,
+        },
+      });
+      return;
+    }
+
+    const patientIds = patients.map((p) => p._id);
+    const patientNameMap = new Map<string, string>();
+    for (const p of patients) {
+      const user = p.userId as unknown as { name?: string } | null;
+      patientNameMap.set(p._id.toString(), user?.name || 'Patient');
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const recentLogs = await DoseLog.find({
+      patientId: { $in: patientIds },
+      scheduledAt: { $gte: sevenDaysAgo },
+    })
+      .populate({ path: 'medicationPlanId', select: 'medicationName medicationStrength' })
+      .sort({ scheduledAt: -1 })
+      .lean()
+      .exec();
+
+    const adherenceByPatient = new Map<string, { taken: number; missed: number }>();
+    for (const log of recentLogs as any[]) {
+      const key = log.patientId.toString();
+      const entry = adherenceByPatient.get(key) || { taken: 0, missed: 0 };
+      if (log.status === 'taken') entry.taken += 1;
+      if (log.status === 'missed' || log.status === 'skipped') entry.missed += 1;
+      adherenceByPatient.set(key, entry);
+    }
+
+    const todayLogs = recentLogs.filter((log: any) => {
+      const time = new Date(log.scheduledAt);
+      return time >= todayStart && time < todayEnd;
+    });
+
+    const patientsSummary = patients.map((p) => {
+      const key = p._id.toString();
+      const adherence = adherenceByPatient.get(key) || { taken: 0, missed: 0 };
+      const total = adherence.taken + adherence.missed;
+      const rate = total > 0 ? Math.round((adherence.taken / total) * 100) : 0;
+      const diagnosis = p.medicalProfile?.illnesses?.[0]?.name || '—';
+      return {
+        id: key,
+        name: patientNameMap.get(key) || 'Patient',
+        diagnosis,
+        lastVisit: null,
+        nextVisit: null,
+        adherence: rate,
+      };
+    });
+
+    const refillThreshold = 5;
+    const refillPlans = await MedicationPlan.find({
+      patientId: { $in: patientIds },
+      active: true,
+      'stock.remaining': { $lte: refillThreshold },
+    })
+      .lean()
+      .exec();
+
+    const refillAlerts = refillPlans.map((plan) => {
+      const remaining = plan.stock?.remaining ?? 0;
+      return {
+        id: plan._id.toString(),
+        name: `${plan.medicationName} ${plan.medicationStrength || ''}`.trim(),
+        patient: patientNameMap.get(plan.patientId.toString()) || 'Patient',
+        remaining,
+        severity: remaining <= 2 ? 'high' : 'medium',
+      };
+    });
+
+    const clinicalTasks = recentLogs
+      .filter((log: any) => log.status === 'missed' || log.status === 'skipped')
+      .slice(0, 6)
+      .map((log: any) => {
+        const plan = log.medicationPlanId as any;
+        const patientName = patientNameMap.get(log.patientId.toString()) || 'Patient';
+        const task = `Review missed dose for ${plan?.medicationName || 'medicine'}`;
+        const isToday = new Date(log.scheduledAt) >= todayStart;
+        return {
+          id: log._id.toString(),
+          patient: patientName,
+          task,
+          due: isToday ? 'Today' : 'Upcoming',
+          priority: isToday ? 'high' : 'medium',
+        };
+      });
+
+    const activity = recentLogs.slice(0, 10).map((log: any) => {
+      const plan = log.medicationPlanId as any;
+      const patientName = patientNameMap.get(log.patientId.toString()) || 'Patient';
+      const statusLabel = log.status === 'taken' ? 'took' : log.status === 'missed' || log.status === 'skipped' ? 'missed' : log.status;
+      return {
+        id: log._id.toString(),
+        time: log.scheduledAt,
+        text: `${patientName} ${statusLabel} ${plan?.medicationName || 'medicine'}`,
+      };
+    });
+
+    const adherenceTotal = patientsSummary.reduce((sum, p) => sum + p.adherence, 0);
+    const avgAdherence = patientsSummary.length > 0 ? Math.round(adherenceTotal / patientsSummary.length) : 0;
+
+    res.status(200).json({
+      patients: patientsSummary,
+      clinicalTasks,
+      refillAlerts,
+      activity,
+      summary: {
+        patientCount: patientsSummary.length,
+        dosesToday: todayLogs.length,
+        avgAdherence,
+      },
+    });
+  } catch (error) {
+    console.error('Doctor overview error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
 
 export const getMedicines = async (
   req: AuthRequest,
@@ -62,11 +431,33 @@ export const addMedicine = async (
       return;
     }
 
+    const device = await Device.findById(patient.deviceId).lean().exec();
+    if (!device) {
+      res.status(400).json({ message: 'Patient device not found' });
+      return;
+    }
+
+    const slotNumber = Number(slotIndex);
+    if (!Number.isFinite(slotNumber) || slotNumber < 1 || slotNumber > device.slotCount) {
+      res.status(400).json({ message: `slotIndex must be between 1 and ${device.slotCount}` });
+      return;
+    }
+
+    const existingSlot = await MedicationPlan.findOne({
+      patientId: patient._id,
+      slotIndex: slotNumber,
+      active: true,
+    }).lean();
+    if (existingSlot) {
+      res.status(409).json({ message: 'Slot already assigned to another active medicine' });
+      return;
+    }
+
     // Create new medication plan
     const medicationPlan = new MedicationPlan({
       patientId: patient._id,
       deviceId: patient.deviceId,
-      slotIndex: Number(slotIndex),
+      slotIndex: slotNumber,
       medicationName,
       medicationStrength,
       medicationForm: medicationForm || 'tablet',
@@ -90,6 +481,108 @@ export const addMedicine = async (
     });
   } catch (error) {
     console.error('Add medicine error:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+export const updateMedicine = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { medicationId } = req.params;
+    const {
+      medicationName,
+      medicationStrength,
+      medicationForm,
+      dosagePerIntake,
+      slotIndex,
+      times,
+      daysOfWeek,
+      startDate,
+      endDate,
+      active,
+      stockRemaining,
+    } = req.body;
+
+    if (!medicationId) {
+      res.status(400).json({ message: 'Medication ID is required' });
+      return;
+    }
+
+    const patient = await Patient.findOne({ userId: req.userId });
+    if (!patient) {
+      res.status(404).json({ message: 'Patient profile not found' });
+      return;
+    }
+
+    const medicationPlan = await MedicationPlan.findOne({ _id: medicationId, patientId: patient._id });
+
+    if (!medicationPlan) {
+      res.status(404).json({ message: 'Medication not found' });
+      return;
+    }
+
+    const nextSlotIndex = slotIndex !== undefined ? Number(slotIndex) : medicationPlan.slotIndex;
+    const nextActive = active !== undefined ? Boolean(active) : medicationPlan.active;
+
+    if (slotIndex !== undefined) {
+      const device = await Device.findById(patient.deviceId).lean().exec();
+      if (!device) {
+        res.status(400).json({ message: 'Patient device not found' });
+        return;
+      }
+
+      if (!Number.isFinite(nextSlotIndex) || nextSlotIndex < 1 || nextSlotIndex > device.slotCount) {
+        res.status(400).json({ message: `slotIndex must be between 1 and ${device.slotCount}` });
+        return;
+      }
+    }
+
+    if (nextActive) {
+      const existingSlot = await MedicationPlan.findOne({
+        patientId: patient._id,
+        slotIndex: nextSlotIndex,
+        active: true,
+        _id: { $ne: medicationId },
+      }).lean();
+      if (existingSlot) {
+        res.status(409).json({ message: 'Slot already assigned to another active medicine' });
+        return;
+      }
+    }
+
+    const update: any = {};
+    if (medicationName !== undefined) update.medicationName = medicationName;
+    if (medicationStrength !== undefined) update.medicationStrength = medicationStrength;
+    if (medicationForm !== undefined) update.medicationForm = medicationForm;
+    if (dosagePerIntake !== undefined) update.dosagePerIntake = Number(dosagePerIntake);
+    if (slotIndex !== undefined) update.slotIndex = nextSlotIndex;
+    if (times !== undefined) update.times = Array.isArray(times) ? times : [times];
+    if (daysOfWeek !== undefined) update.daysOfWeek = Array.isArray(daysOfWeek) ? daysOfWeek : [daysOfWeek];
+    if (startDate !== undefined) update.startDate = startDate ? new Date(startDate) : new Date();
+    if (endDate !== undefined) update.endDate = endDate ? new Date(endDate) : null;
+    if (active !== undefined) update.active = nextActive;
+
+    if (stockRemaining !== undefined) {
+      const remaining = Number(stockRemaining);
+      const existingTotal = medicationPlan.stock?.totalLoaded || 0;
+      update.stock = {
+        remaining,
+        totalLoaded: Math.max(existingTotal, remaining),
+        lastRefilledAt: medicationPlan.stock?.lastRefilledAt,
+      };
+    }
+
+    Object.assign(medicationPlan, update);
+    await medicationPlan.save();
+
+    res.status(200).json({
+      message: 'Medication updated successfully',
+      medicationPlan,
+    });
+  } catch (error) {
+    console.error('Update medicine error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -121,8 +614,11 @@ export const getScheduleToday = async (
     const scheduleMap = new Map<string, any>();
 
     for (const med of medications) {
-      // Check if medication should be taken on today
-      if (!med.daysOfWeek.includes(adjustedDay)) {
+      // Check if medication should be taken on today (coerce string values to numbers)
+      const normalizedDays = Array.isArray(med.daysOfWeek)
+        ? med.daysOfWeek.map((d: any) => Number(d)).filter((d: number) => !Number.isNaN(d))
+        : [];
+      if (!normalizedDays.includes(adjustedDay)) {
         continue;
       }
 
@@ -213,7 +709,7 @@ export const getAdherence = async (
     const allSchedules: IDoseLog[] = await DoseLog.find({ patientId: patient._id });
 
     const taken = allSchedules.filter((s: IDoseLog) => s.status === 'taken').length;
-    const missed = allSchedules.filter((s: IDoseLog) => s.status === 'missed').length;
+    const missed = allSchedules.filter((s: IDoseLog) => s.status === 'missed' || s.status === 'skipped').length;
     const total = taken + missed;
 
     const rate = total > 0 ? (taken / total) * 100 : 0;
@@ -428,7 +924,15 @@ export const getProfile = async (
         slotCount: (patient.deviceId as any).slotCount,
         timezone: (patient.deviceId as any).timezone,
         batteryLevel: (patient.deviceId as any).batteryLevel,
+        wifiStrength: (patient.deviceId as any).wifiStrength,
         wifiConnected: (patient.deviceId as any).wifiConnected,
+        lastStatus: (patient.deviceId as any).lastStatus,
+        lastHeartbeatAt: (patient.deviceId as any).lastHeartbeatAt,
+        firmwareVersion: (patient.deviceId as any).firmwareVersion,
+        uptimeSeconds: (patient.deviceId as any).uptimeSeconds,
+        storageFreeKb: (patient.deviceId as any).storageFreeKb,
+        temperatureC: (patient.deviceId as any).temperatureC,
+        lastError: (patient.deviceId as any).lastError,
       } : null,
     });
   } catch (error) {
@@ -519,13 +1023,58 @@ export const markDoseTaken = async (
   try {
     const { doseId } = req.params;
 
-    const dose = await DoseLog.findById(doseId);
+    let dose = null;
+
+    if (doseId.includes('_')) {
+      const [planId, timeMs] = doseId.split('_');
+      if (!Types.ObjectId.isValid(planId) || !timeMs) {
+        res.status(400).json({ message: 'Invalid doseId' });
+        return;
+      }
+
+      const patient = await Patient.findOne({ userId: req.userId });
+      if (!patient) {
+        res.status(404).json({ message: 'Patient profile not found' });
+        return;
+      }
+
+      const scheduledAt = new Date(Number(timeMs));
+      if (Number.isNaN(scheduledAt.getTime())) {
+        res.status(400).json({ message: 'Invalid scheduled time' });
+        return;
+      }
+
+      dose = await DoseLog.findOne({
+        patientId: patient._id,
+        medicationPlanId: planId,
+        scheduledAt,
+      });
+
+      if (!dose) {
+        const plan = await MedicationPlan.findById(planId);
+        if (!plan) {
+          res.status(404).json({ message: 'Medication not found' });
+          return;
+        }
+
+        dose = new DoseLog({
+          patientId: patient._id,
+          deviceId: patient.deviceId,
+          medicationPlanId: plan._id,
+          slotIndex: plan.slotIndex,
+          scheduledAt,
+          status: 'pending',
+        });
+      }
+    } else {
+      dose = await DoseLog.findById(doseId);
+    }
+
     if (!dose) {
       res.status(404).json({ message: 'Dose not found' });
       return;
     }
 
-    // Update dose status
     dose.status = 'taken';
     dose.takenAt = new Date();
     await dose.save();
@@ -544,13 +1093,58 @@ export const markDoseMissed = async (
   try {
     const { doseId } = req.params;
 
-    const dose = await DoseLog.findById(doseId);
+    let dose = null;
+
+    if (doseId.includes('_')) {
+      const [planId, timeMs] = doseId.split('_');
+      if (!Types.ObjectId.isValid(planId) || !timeMs) {
+        res.status(400).json({ message: 'Invalid doseId' });
+        return;
+      }
+
+      const patient = await Patient.findOne({ userId: req.userId });
+      if (!patient) {
+        res.status(404).json({ message: 'Patient profile not found' });
+        return;
+      }
+
+      const scheduledAt = new Date(Number(timeMs));
+      if (Number.isNaN(scheduledAt.getTime())) {
+        res.status(400).json({ message: 'Invalid scheduled time' });
+        return;
+      }
+
+      dose = await DoseLog.findOne({
+        patientId: patient._id,
+        medicationPlanId: planId,
+        scheduledAt,
+      });
+
+      if (!dose) {
+        const plan = await MedicationPlan.findById(planId);
+        if (!plan) {
+          res.status(404).json({ message: 'Medication not found' });
+          return;
+        }
+
+        dose = new DoseLog({
+          patientId: patient._id,
+          deviceId: patient.deviceId,
+          medicationPlanId: plan._id,
+          slotIndex: plan.slotIndex,
+          scheduledAt,
+          status: 'pending',
+        });
+      }
+    } else {
+      dose = await DoseLog.findById(doseId);
+    }
+
     if (!dose) {
       res.status(404).json({ message: 'Dose not found' });
       return;
     }
 
-    // Update dose status
     dose.status = 'missed';
     await dose.save();
 

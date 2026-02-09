@@ -33,6 +33,7 @@ body {
 .status-taken { background-color: #d1fae5; color: #065f46; }
 .status-upcoming { background-color: #e6f0ff; color: #1e3a8a; }
 .status-missed { background-color: #fee2e2; color: #991b1b; }
+.status-skipped { background-color: #fff4cc; color: #8a5a00; }
 
 .small-pill { @apply px-2 py-1 rounded-md text-xs font-semibold inline-block }
 
@@ -77,6 +78,7 @@ body {
 .dark .status-taken { background-color: #065f46; color: #bbf7d0; }
 .dark .status-upcoming { background-color: #1e3a8a; color: #dbeafe; }
 .dark .status-missed { background-color: #7f1d1d; color: #fee2e2; }
+.dark .status-skipped { background-color: #7a5b0a; color: #fde68a; }
 
 /* Medicine card adjustments */
 /* .dark .border removed to avoid circular dependency with Tailwind utilities. */

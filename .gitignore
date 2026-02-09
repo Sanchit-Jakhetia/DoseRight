@@ -48,11 +48,29 @@ replay_pid*
 /frontend/.vite/
 
 # Local env files (do not commit secrets)
+/.env
+/.env.local
+/.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
 /frontend/.env
 /frontend/.env.local
 /frontend/.env.*.local
 /backend/.env
 /backend/.env.local
+
+# Secret files / key material
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.crt
+**/*.cer
+**/serviceAccount*.json
+**/*credentials*.json
+**/*secrets*.json
+**/.secrets*
 
 # Logs
 npm-debug.log*

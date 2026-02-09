@@ -97,8 +97,8 @@ export default function AuthPage({ initialTab = 'login', onSuccess, onClose }: P
     <div className="min-h-screen flex items-center justify-center p-6 bg-[url('/src/assets/pattern.png')] bg-[length:240px] dark:bg-slate-900">
       <div className="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg">
         <div className="flex flex-col items-center mb-4">
-          <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-white mb-3">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.12 3.88a5 5 0 00-7.07 0L3.88 13.05a5 5 0 007.07 7.07L20.12 10.94a5 5 0 000-7.06z"/></svg>
+          <div className="w-16 h-16 rounded-lg bg-white border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden mb-3">
+            <img src="/logo.png" alt="DoseRight" className="w-12 h-12 object-contain" />
           </div>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">DoseRight</h1>
           <div className="text-sm text-slate-500 dark:text-slate-300">Your Smart Medicine Partner</div>

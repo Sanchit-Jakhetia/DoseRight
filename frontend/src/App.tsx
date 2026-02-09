@@ -45,6 +45,7 @@ export default function App() {
   const [route, setRoute] = useState<string>(() => window.location.pathname || '/')
   const [confirmAction, setConfirmAction] = useState<any>(null)
   const [showAddMedicine, setShowAddMedicine] = useState(false)
+  const [editingMedicineId, setEditingMedicineId] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [historyData, setHistoryData] = useState<any>(null)
   const [showRefill, setShowRefill] = useState(false)
@@ -73,6 +74,22 @@ export default function App() {
     endDate: '',
     stockRemaining: 0,
   })
+
+  const resetMedicineForm = () => {
+    setAddMedicineForm({
+      medicationName: '',
+      medicationStrength: '',
+      medicationForm: 'tablet',
+      dosagePerIntake: 1,
+      slotIndex: 1,
+      times: ['08:00'],
+      repetitionType: 'daily',
+      daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
+      startDate: new Date().toISOString().split('T')[0],
+      endDate: '',
+      stockRemaining: 0,
+    })
+  }
 
   // API base - use Vite env if provided, otherwise default to backend port 8080
   const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8080'
@@ -105,6 +122,10 @@ export default function App() {
     axios.get(`${API_BASE}/api/dashboard/summary`, { headers })
       .then(r => setSummary(r.data ?? null))
       .catch(() => setSummary(null))
+
+    axios.get(`${API_BASE}/api/dashboard/profile`, { headers })
+      .then(r => setProfileData(r.data ?? null))
+      .catch(() => setProfileData(null))
   }
 
   const handleMarkDose = (doseId: string, dose: any, action: 'taken' | 'missed') => {
@@ -172,28 +193,46 @@ export default function App() {
         }
       }
       
-      const response = await axios.post(`${API_BASE}/api/dashboard/medicines`, medicineData, { headers })
-      
+      if (editingMedicineId) {
+        await axios.patch(`${API_BASE}/api/dashboard/medicines/${editingMedicineId}`, {
+          ...medicineData,
+          stockRemaining: Number(addMedicineForm.stockRemaining),
+        }, { headers })
+      } else {
+        await axios.post(`${API_BASE}/api/dashboard/medicines`, medicineData, { headers })
+      }
+
       // Reset form and close modal
-      setAddMedicineForm({
-        medicationName: '',
-        medicationStrength: '',
-        medicationForm: 'tablet',
-        dosagePerIntake: 1,
-        slotIndex: 1,
-        times: ['08:00'],
-        repetitionType: 'daily',
-        daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: '',
-        stockRemaining: 0,
-      })
+      resetMedicineForm()
       setShowAddMedicine(false)
+      setEditingMedicineId(null)
       fetchDashboardData()
-      alert('Medicine added successfully!')
+      alert(editingMedicineId ? 'Medicine updated successfully!' : 'Medicine added successfully!')
     } catch (error: any) {
-      alert(error?.response?.data?.message || 'Failed to add medicine')
+      alert(error?.response?.data?.message || (editingMedicineId ? 'Failed to update medicine' : 'Failed to add medicine'))
     }
+  }
+
+  const openEditMedicine = (medicine: any) => {
+    const times = Array.isArray(medicine.times) && medicine.times.length > 0 ? medicine.times : ['08:00']
+    const daysOfWeek = Array.isArray(medicine.daysOfWeek) ? medicine.daysOfWeek : [1, 2, 3, 4, 5, 6, 7]
+    const repetitionType = daysOfWeek.length === 7 ? 'daily' : (daysOfWeek.length > 0 ? 'weekly' : 'monthly')
+
+    setAddMedicineForm({
+      medicationName: medicine.medicationName || '',
+      medicationStrength: medicine.medicationStrength || '',
+      medicationForm: medicine.medicationForm || 'tablet',
+      dosagePerIntake: Number(medicine.dosagePerIntake) || 1,
+      slotIndex: Number(medicine.slotIndex) || 1,
+      times,
+      repetitionType,
+      daysOfWeek,
+      startDate: medicine.startDate ? new Date(medicine.startDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      endDate: medicine.endDate ? new Date(medicine.endDate).toISOString().split('T')[0] : '',
+      stockRemaining: Number(medicine.stock?.remaining) || 0,
+    })
+    setEditingMedicineId(medicine._id)
+    setShowAddMedicine(true)
   }
 
   const fetchHistory = async () => {
@@ -463,7 +502,9 @@ export default function App() {
         <>
           <header className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold">DR</div>
+          <div className="w-10 h-10 rounded-full bg-white border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden">
+            <img src="/logo.png" alt="DoseRight" className="w-8 h-8 object-contain" />
+          </div>
           <div>
             <h1 className="text-xl font-semibold">DoseRight</h1>
             <div className="text-xs text-slate-500">Medication manager</div>
@@ -505,11 +546,16 @@ export default function App() {
           summary={summary}
           profileData={profileData}
           onOpenProfile={openProfilePanel}
-          onOpenAddMedicine={() => setShowAddMedicine(true)}
+          onOpenAddMedicine={() => {
+            resetMedicineForm()
+            setEditingMedicineId(null)
+            setShowAddMedicine(true)
+          }}
           onOpenHistory={fetchHistory}
           onOpenRefill={openRefillPanel}
           onMarkDose={handleMarkDose}
           onRefill={handleRefill}
+          onEditMedicine={openEditMedicine}
         />
       )}
 
@@ -550,9 +596,19 @@ export default function App() {
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg w-full max-w-2xl my-8">
             <div className="sticky top-0 bg-white dark:bg-slate-800 border-b dark:border-slate-700 p-6 rounded-t-xl flex items-center justify-between">
               <div className="flex-1"></div>
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Add New Medicine</h2>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+                {editingMedicineId ? 'Edit Medicine' : 'Add New Medicine'}
+              </h2>
               <div className="flex-1 flex justify-end">
-                <button onClick={() => setShowAddMedicine(false)} className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-2xl leading-none">×</button>
+                <button
+                  onClick={() => {
+                    setShowAddMedicine(false)
+                    setEditingMedicineId(null)
+                  }}
+                  className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-2xl leading-none"
+                >
+                  ×
+                </button>
               </div>
             </div>
             
@@ -796,7 +852,10 @@ export default function App() {
               <div className="flex gap-3 justify-end pt-4 border-t dark:border-slate-700">
                 <button
                   type="button"
-                  onClick={() => setShowAddMedicine(false)}
+                  onClick={() => {
+                    setShowAddMedicine(false)
+                    setEditingMedicineId(null)
+                  }}
                   className="px-4 py-2 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
                 >
                   Cancel
@@ -805,7 +864,7 @@ export default function App() {
                   type="submit"
                   className="px-4 py-2 rounded-md bg-cyan-600 text-white hover:bg-cyan-700 transition-colors font-medium"
                 >
-                  Add Medicine
+                  {editingMedicineId ? 'Save Changes' : 'Add Medicine'}
                 </button>
               </div>
             </form>

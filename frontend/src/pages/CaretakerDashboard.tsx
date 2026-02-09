@@ -1,63 +1,56 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
 import { ClockIcon, BoxIcon, PillIcon, WarningIcon, HomeIcon } from '../components/Icons'
-
-// Simple caretaker dashboard with mock data until caretaker APIs are available.
-// Mirrors the patient dashboard look/feel but focuses on patient oversight.
-
-const mockPatients = [
-  {
-    id: 'p1',
-    name: 'Ravi Kumar',
-    nextDose: '08:30 AM',
-    medicine: 'Metformin 500mg',
-    adherence: 92,
-    status: 'On Track',
-    alerts: 1,
-  },
-  {
-    id: 'p2',
-    name: 'Anita Sharma',
-    nextDose: '09:15 AM',
-    medicine: 'Atorvastatin 20mg',
-    adherence: 78,
-    status: 'Needs Attention',
-    alerts: 3,
-  },
-  {
-    id: 'p3',
-    name: 'Rahul Verma',
-    nextDose: '10:00 AM',
-    medicine: 'Lisinopril 10mg',
-    adherence: 85,
-    status: 'On Track',
-    alerts: 0,
-  },
-]
-
-const refillAlerts = [
-  { id: 'r1', name: 'Metformin 500mg', patient: 'Ravi Kumar', remaining: '4 days', severity: 'medium' },
-  { id: 'r2', name: 'Atorvastatin 20mg', patient: 'Anita Sharma', remaining: '2 days', severity: 'high' },
-]
-
-const activityLog = [
-  { id: 'a1', time: '07:10 AM', text: 'Ravi took Metformin 500mg (On time)' },
-  { id: 'a2', time: '07:30 AM', text: 'Anita missed Amlodipine 5mg (Follow-up needed)' },
-  { id: 'a3', time: '06:50 AM', text: 'Rahul took Lisinopril 10mg (On time)' },
-]
-
-const schedule = [
-  { id: 's1', patient: 'Ravi Kumar', time: '08:30 AM', med: 'Metformin 500mg', status: 'pending' },
-  { id: 's2', patient: 'Anita Sharma', time: '09:15 AM', med: 'Atorvastatin 20mg', status: 'pending' },
-  { id: 's3', patient: 'Rahul Verma', time: '10:00 AM', med: 'Lisinopril 10mg', status: 'pending' },
-]
 
 type Props = {
   user: any
 }
 
 export default function CaretakerDashboard({ user }: Props) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [overview, setOverview] = useState<any>(null)
+
+  const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8080'
+
+  useEffect(() => {
+    let active = true
+    const fetchOverview = async () => {
+      if (!user?.token) return
+      setLoading(true)
+      setError(null)
+      try {
+        const headers = { Authorization: `Bearer ${user.token}` }
+        const response = await axios.get(`${API_BASE}/api/dashboard/caretaker/overview`, { headers })
+        if (active) setOverview(response.data)
+      } catch (err: any) {
+        if (active) setError(err?.response?.data?.message || 'Failed to load caretaker data')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    fetchOverview()
+    return () => { active = false }
+  }, [user, API_BASE])
+
+  const summary = overview?.summary || { patientCount: 0, dosesToday: 0, pendingToday: 0, avgAdherence: 0 }
+  const patients = overview?.patients || []
+  const schedule = overview?.schedule || []
+  const pendingSchedule = schedule.filter((item: any) => item.status === 'pending')
+  const completedSchedule = schedule.filter((item: any) => item.status !== 'pending')
+  const refillAlerts = overview?.refillAlerts || []
+  const activityLog = overview?.activity || []
+
+  const isEmpty = useMemo(() => !loading && !error && patients.length === 0, [loading, error, patients.length])
+
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="card bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300">
+          {error}
+        </div>
+      )}
       {/* Top actions */}
       <div className="grid grid-cols-4 gap-4">
         <div className="top-action flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
@@ -82,13 +75,13 @@ export default function CaretakerDashboard({ user }: Props) {
       <div className="grid grid-cols-4 gap-4">
         <div className="card">
           <div className="text-sm text-slate-500">Patients</div>
-          <div className="text-2xl font-semibold mt-1">{mockPatients.length}</div>
-          <div className="text-xs text-green-600 mt-1">All online</div>
+          <div className="text-2xl font-semibold mt-1">{summary.patientCount}</div>
+          <div className="text-xs text-slate-500 mt-1">Managed patients</div>
         </div>
         <div className="card">
           <div className="text-sm text-slate-500">Doses today</div>
-          <div className="text-2xl font-semibold mt-1">12</div>
-          <div className="text-xs text-slate-500 mt-1">3 pending</div>
+          <div className="text-2xl font-semibold mt-1">{summary.dosesToday}</div>
+          <div className="text-xs text-slate-500 mt-1">{summary.pendingToday} pending</div>
         </div>
         <div className="card">
           <div className="text-sm text-slate-500">Refill alerts</div>
@@ -97,7 +90,7 @@ export default function CaretakerDashboard({ user }: Props) {
         </div>
         <div className="card">
           <div className="text-sm text-slate-500">Average adherence</div>
-          <div className="text-2xl font-semibold mt-1">85%</div>
+          <div className="text-2xl font-semibold mt-1">{summary.avgAdherence}%</div>
           <div className="text-xs text-slate-500 mt-1">Past 7 days</div>
         </div>
       </div>
@@ -113,11 +106,19 @@ export default function CaretakerDashboard({ user }: Props) {
             <div className="text-xs text-slate-500">Live status</div>
           </div>
           <div className="divide-y divide-slate-200 dark:divide-slate-700">
-            {mockPatients.map((p) => (
+            {loading && (
+              <div className="py-6 text-center text-slate-400">Loading patients...</div>
+            )}
+            {isEmpty && (
+              <div className="py-6 text-center text-slate-400">No patients assigned</div>
+            )}
+            {!loading && patients.map((p: any) => (
               <div key={p.id} className="py-3 flex items-center justify-between">
                 <div>
                   <div className="font-medium text-slate-900 dark:text-slate-100">{p.name}</div>
-                  <div className="text-xs text-slate-500">Next: {p.medicine} at {p.nextDose}</div>
+                  <div className="text-xs text-slate-500">
+                    Next: {p.nextDoseMedicine || '—'} at {p.nextDoseTime ? new Date(p.nextDoseTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                  </div>
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="text-sm text-slate-600">{p.status}</div>
@@ -139,18 +140,51 @@ export default function CaretakerDashboard({ user }: Props) {
           <h2 className="font-semibold mb-2">Today's Rounds</h2>
           <p className="text-sm text-slate-500 mb-3">Upcoming doses you oversee</p>
           <div className="space-y-3">
-            {schedule.map((item) => (
-              <div key={item.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-slate-900 dark:text-slate-100">{item.patient}</div>
-                  <div className="text-xs text-slate-500">{item.med}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm text-slate-600"><ClockIcon className="w-4 h-4 inline mr-1" />{item.time}</div>
-                  <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">{item.status}</span>
+            {pendingSchedule.length === 0 && completedSchedule.length === 0 && !loading && (
+              <div className="text-center text-slate-400 py-6">No doses for today</div>
+            )}
+
+            {pendingSchedule.length > 0 && (
+              <div>
+                <div className="text-xs uppercase text-slate-500 mb-2">Pending</div>
+                <div className="space-y-3">
+                  {pendingSchedule.map((item: any) => (
+                    <div key={item.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                      <div>
+                        <div className="font-medium text-slate-900 dark:text-slate-100">{item.patient}</div>
+                        <div className="text-xs text-slate-500">{item.med}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm text-slate-600"><ClockIcon className="w-4 h-4 inline mr-1" />{new Date(item.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
+                        <span className="text-xs px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">Pending</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
+            )}
+
+            {completedSchedule.length > 0 && (
+              <div>
+                <div className="text-xs uppercase text-slate-500 mb-2">Completed</div>
+                <div className="space-y-3">
+                  {completedSchedule.map((item: any) => (
+                    <div key={item.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                      <div>
+                        <div className="font-medium text-slate-900 dark:text-slate-100">{item.patient}</div>
+                        <div className="text-xs text-slate-500">{item.med}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm text-slate-600"><ClockIcon className="w-4 h-4 inline mr-1" />{new Date(item.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
+                        <span className={`text-xs px-2 py-1 rounded-full ${item.status === 'taken' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+                          {item.status === 'taken' ? 'Taken' : 'Missed'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -163,7 +197,10 @@ export default function CaretakerDashboard({ user }: Props) {
             <span className="text-xs text-slate-500">Action required</span>
           </div>
           <div className="space-y-3">
-            {refillAlerts.map((r) => (
+            {refillAlerts.length === 0 && !loading && (
+              <div className="text-center text-slate-400 py-6">No refill alerts</div>
+            )}
+            {refillAlerts.map((r: any) => (
               <div key={r.id} className={`p-3 rounded-lg border ${r.severity === 'high' ? 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10' : 'border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10'}`}>
                 <div className="flex items-center justify-between">
                   <div>
@@ -187,9 +224,12 @@ export default function CaretakerDashboard({ user }: Props) {
             <span className="text-xs text-slate-500">Today</span>
           </div>
           <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-            {activityLog.map((log) => (
+            {activityLog.length === 0 && !loading && (
+              <div className="text-center text-slate-400 py-6">No recent activity</div>
+            )}
+            {activityLog.map((log: any) => (
               <div key={log.id} className="flex items-center justify-between bg-slate-50 dark:bg-slate-700/60 rounded-lg px-3 py-2">
-                <div className="text-xs text-slate-500 w-20">{log.time}</div>
+                <div className="text-xs text-slate-500 w-20">{new Date(log.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
                 <div className="flex-1 text-sm text-slate-800 dark:text-slate-100">{log.text}</div>
               </div>
             ))}
