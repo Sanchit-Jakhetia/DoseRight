@@ -9,7 +9,9 @@ export default function DoctorDashboard({ user }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [overview, setOverview] = useState<any>(null)
 
-  const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8080'
+  const API_BASE = (import.meta as any).env?.VITE_API_URL
+    ?? (import.meta as any).env?.VITE_API_BASE_URL
+    ?? 'http://localhost:8080'
 
   useEffect(() => {
     let active = true

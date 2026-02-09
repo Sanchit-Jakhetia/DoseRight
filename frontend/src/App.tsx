@@ -92,7 +92,9 @@ export default function App() {
   }
 
   // API base - use Vite env if provided, otherwise default to backend port 8080
-  const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8080'
+  const API_BASE = (import.meta as any).env?.VITE_API_URL
+    ?? (import.meta as any).env?.VITE_API_BASE_URL
+    ?? 'http://localhost:8080'
 
   const getAuthHeaders = () => {
     const headers = user?.token ? { Authorization: `Bearer ${user.token}` } : {}
