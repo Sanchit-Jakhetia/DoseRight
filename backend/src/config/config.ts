@@ -5,7 +5,7 @@ dotenv.config();
 const corsOriginRaw = process.env.CORS_ORIGIN || 'http://localhost:5173';
 const corsOrigins = corsOriginRaw
   .split(',')
-  .map((origin) => origin.trim())
+  .map((origin: string) => origin.trim())
   .filter(Boolean);
 
 export const config = {

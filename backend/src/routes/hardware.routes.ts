@@ -133,10 +133,10 @@ hardwareRouter.get('/profile', async (req: Request, res: Response): Promise<void
     }
 
     const patientUser = patient.userId as unknown as { name?: string } | null;
-    const approvedCaretaker = patient.caretakers?.find((c) => c.approved);
+    const approvedCaretaker = patient.caretakers?.find((c: { approved?: boolean }) => c.approved);
     const caretakerUser = approvedCaretaker?.userId as unknown as { name?: string } | null;
 
-    const illnesses = patient.medicalProfile?.illnesses?.map((illness) => illness.name) || [];
+    const illnesses = patient.medicalProfile?.illnesses?.map((illness: { name?: string }) => illness.name) || [];
     const allergies = patient.medicalProfile?.allergies || [];
 
     res.status(200).json({

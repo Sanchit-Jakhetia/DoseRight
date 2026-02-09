@@ -1,4 +1,4 @@
-import express, { Application, Request, Response } from 'express';
+import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { config } from './config/config';
 import { connectDB } from './models';
@@ -14,7 +14,7 @@ app.use(cors({
   origin: config.corsOrigin,
   credentials: true,
 }));
-app.use((req: Request, _res: Response, next) => {
+app.use((req: Request, _res: Response, next: NextFunction) => {
   req.on('aborted', () => {
     console.warn('Request aborted', {
       method: req.method,
