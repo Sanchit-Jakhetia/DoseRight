@@ -1,4 +1,6 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
+import fs from 'fs';
+import path from 'path';
 import cors from 'cors';
 import { config } from './config/config';
 import { connectDB } from './models';
@@ -325,6 +327,19 @@ app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/hardware', hardwareRouter);
 app.use('/api/device', deviceRouter);
+
+// Serve frontend build (if present) and enable SPA fallback on refresh
+const frontendDistPath = path.resolve(__dirname, '../../frontend/dist');
+const frontendIndexPath = path.join(frontendDistPath, 'index.html');
+if (fs.existsSync(frontendIndexPath)) {
+  app.use(express.static(frontendDistPath));
+  app.get('*', (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/debug') || req.path.startsWith('/health')) {
+      return next();
+    }
+    return res.sendFile(frontendIndexPath);
+  });
+}
 
 // 404 handler
 app.use((req: Request, res: Response) => {

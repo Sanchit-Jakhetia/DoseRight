@@ -430,6 +430,23 @@ export default function App() {
     }
   }
 
+  // Update document title based on route and user role
+  useEffect(() => {
+    if (route === '/login') {
+      document.title = 'Login - DoseRight'
+    } else if (route === '/signup') {
+      document.title = 'Sign Up - DoseRight'
+    } else if (user) {
+      const roleTitle = user.role === 'admin' ? 'Admin Dashboard' :
+                        user.role === 'doctor' ? 'Doctor Dashboard' :
+                        user.role === 'caretaker' ? 'Caretaker Dashboard' :
+                        'Patient Dashboard'
+      document.title = `${roleTitle} - DoseRight`
+    } else {
+      document.title = 'DoseRight - Smart Medication Management'
+    }
+  }, [route, user])
+
   // Basic route guard: if user is not authenticated, redirect to /login for protected routes
   useEffect(() => {
     // if not logged in and not on auth pages, force to /login
