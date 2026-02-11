@@ -24,6 +24,45 @@ const COUNTRY_CODES = [
   { code: '+63', country: 'PH', flag: '🇵🇭' },
 ]
 
+// Validation helpers
+const validators = {
+  email: (value: string): string | null => {
+    if (!value.trim()) return 'Email is required'
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(value)) return 'Please enter a valid email address'
+    return null
+  },
+  password: (value: string): string | null => {
+    if (!value) return 'Password is required'
+    if (value.length < 8) return 'Password must be at least 8 characters'
+    if (!/[A-Z]/.test(value)) return 'Password must contain at least one uppercase letter'
+    if (!/[a-z]/.test(value)) return 'Password must contain at least one lowercase letter'
+    if (!/[0-9]/.test(value)) return 'Password must contain at least one number'
+    return null
+  },
+  name: (value: string): string | null => {
+    if (!value.trim()) return 'Name is required'
+    if (value.trim().length < 2) return 'Name must be at least 2 characters'
+    if (!/^[a-zA-Z\s'-]+$/.test(value.trim())) return 'Name can only contain letters, spaces, hyphens and apostrophes'
+    return null
+  },
+  phone: (value: string): string | null => {
+    if (!value.trim()) return 'Phone number is required'
+    const digitsOnly = value.replace(/\D/g, '')
+    if (digitsOnly.length < 7) return 'Phone number must be at least 7 digits'
+    if (digitsOnly.length > 15) return 'Phone number cannot exceed 15 digits'
+    if (!/^\d+$/.test(digitsOnly)) return 'Please enter a valid phone number'
+    return null
+  },
+}
+
+type FieldErrors = {
+  email?: string | null
+  password?: string | null
+  name?: string | null
+  phone?: string | null
+}
+
 type Props = {
   initialTab?: 'login' | 'signup'
   onSuccess: (user: any) => void
@@ -49,15 +88,61 @@ export default function AuthPage({ initialTab = 'login', onSuccess, onClose }: P
   const [spassword, setSPassword] = useState('')
   const [signupSuccess, setSignupSuccess] = useState(false)
 
+  // Field-level validation errors
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
+
+  // Validate a single field and update errors
+  const validateField = (field: keyof typeof validators, value: string) => {
+    const error = validators[field](value)
+    setFieldErrors(prev => ({ ...prev, [field]: error }))
+    return error
+  }
+
+  // Mark field as touched (for showing errors only after interaction)
+  const handleBlur = (field: string) => {
+    setTouched(prev => ({ ...prev, [field]: true }))
+  }
+
+  // Validate login form
+  const validateLoginForm = (): boolean => {
+    const emailError = validators.email(email)
+    const passwordError = password ? null : 'Password is required'
+    
+    setFieldErrors({ email: emailError, password: passwordError })
+    setTouched({ email: true, password: true })
+    
+    return !emailError && !passwordError
+  }
+
+  // Validate signup form
+  const validateSignupForm = (): boolean => {
+    const nameError = validators.name(name)
+    const emailError = validators.email(semail)
+    const phoneError = validators.phone(phone)
+    const passwordError = validators.password(spassword)
+    
+    setFieldErrors({
+      name: nameError,
+      email: emailError,
+      phone: phoneError,
+      password: passwordError,
+    })
+    setTouched({ name: true, email: true, phone: true, password: true })
+    
+    return !nameError && !emailError && !phoneError && !passwordError
+  }
+
   const submitLogin = async (e?: React.FormEvent) => {
     e?.preventDefault()
     setError(null)
-    if (!email || !password) { setError('Please enter email and password'); return }
+    
+    if (!validateLoginForm()) return
+    
     setLoading(true)
     try {
       const response = await doLogin({ email, password })
       saveToken(response.token)
-      // Pass the full response with token and user, including role for profile check
       onSuccess({ ...response.user, token: response.token, isNewLogin: true })
       if (onClose) onClose()
     } catch (err: any) {
@@ -68,20 +153,21 @@ export default function AuthPage({ initialTab = 'login', onSuccess, onClose }: P
   const submitSignup = async (e?: React.FormEvent) => {
     e?.preventDefault()
     setError(null)
-    if (!name || !semail || !phone || !spassword) { setError('Please fill all fields'); return }
+    
+    if (!validateSignupForm()) return
+    
     setLoading(true)
     try {
       const fullPhone = `${countryCode}${phone}`
       const response = await doSignup({ name, email: semail, phone: fullPhone, password: spassword, role })
       saveToken(response.token)
-      // Show success message
       setSignupSuccess(true)
-      // Reset form
       setName('')
       setSemail('')
       setPhone('')
       setSPassword('')
-      // After 2 seconds, switch to login tab
+      setFieldErrors({})
+      setTouched({})
       setTimeout(() => {
         setSignupSuccess(false)
         setTab('login')
@@ -90,6 +176,29 @@ export default function AuthPage({ initialTab = 'login', onSuccess, onClose }: P
       setError(err?.response?.data?.message ?? (err?.message || 'Signup failed'))
     } finally { setLoading(false) }
   }
+
+  // Helper component for field error display
+  const FieldError = ({ error, touched: isTouched }: { error?: string | null, touched?: boolean }) => {
+    if (!isTouched || !error) return null
+    return <p className="text-xs text-red-500 mt-1">{error}</p>
+  }
+
+  // Password strength indicator
+  const getPasswordStrength = (pwd: string): { strength: number; label: string; color: string } => {
+    let strength = 0
+    if (pwd.length >= 8) strength++
+    if (/[A-Z]/.test(pwd)) strength++
+    if (/[a-z]/.test(pwd)) strength++
+    if (/[0-9]/.test(pwd)) strength++
+    if (/[^A-Za-z0-9]/.test(pwd)) strength++
+    
+    if (strength <= 2) return { strength, label: 'Weak', color: 'bg-red-500' }
+    if (strength <= 3) return { strength, label: 'Fair', color: 'bg-yellow-500' }
+    if (strength <= 4) return { strength, label: 'Good', color: 'bg-blue-500' }
+    return { strength, label: 'Strong', color: 'bg-green-500' }
+  }
+
+  const passwordStrength = getPasswordStrength(spassword)
 
   const selectedCountry = COUNTRY_CODES.find(c => c.code === countryCode)
 
@@ -117,29 +226,104 @@ export default function AuthPage({ initialTab = 'login', onSuccess, onClose }: P
             <form onSubmit={submitLogin} className="space-y-3">
               <div>
                 <label className="text-xs text-slate-600 dark:text-slate-300">Email</label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" className="w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500" />
+                <input 
+                  type="email" 
+                  value={email} 
+                  onChange={e => {
+                    setEmail(e.target.value)
+                    if (touched.email) validateField('email', e.target.value)
+                  }}
+                  onBlur={() => {
+                    handleBlur('email')
+                    validateField('email', email)
+                  }}
+                  placeholder="you@example.com" 
+                  className={`w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 ${
+                    touched.email && fieldErrors.email 
+                      ? 'border-red-500 focus:ring-red-500' 
+                      : 'dark:border-slate-600 focus:ring-cyan-500'
+                  } focus:outline-none focus:ring-2`}
+                />
+                <FieldError error={fieldErrors.email} touched={touched.email} />
               </div>
               <div>
                 <label className="text-xs text-slate-600 dark:text-slate-300">Password</label>
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className="w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500" />
+                <input 
+                  type="password" 
+                  value={password} 
+                  onChange={e => {
+                    setPassword(e.target.value)
+                    if (touched.password && !e.target.value) {
+                      setFieldErrors(prev => ({ ...prev, password: 'Password is required' }))
+                    } else if (touched.password) {
+                      setFieldErrors(prev => ({ ...prev, password: null }))
+                    }
+                  }}
+                  onBlur={() => {
+                    handleBlur('password')
+                    if (!password) setFieldErrors(prev => ({ ...prev, password: 'Password is required' }))
+                  }}
+                  placeholder="••••••••" 
+                  className={`w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 ${
+                    touched.password && fieldErrors.password 
+                      ? 'border-red-500 focus:ring-red-500' 
+                      : 'dark:border-slate-600 focus:ring-cyan-500'
+                  } focus:outline-none focus:ring-2`}
+                />
+                <FieldError error={fieldErrors.password} touched={touched.password} />
               </div>
               <div className="flex items-center justify-between">
                 <div className="text-sm text-slate-600 dark:text-slate-300">&nbsp;</div>
-                <a className="text-sm text-cyan-600 hover:underline">Forgot password?</a>
+                <a className="text-sm text-cyan-600 hover:underline cursor-pointer">Forgot password?</a>
               </div>
               <div>
-                <button type="submit" disabled={loading} className="w-full py-3 rounded-full text-white bg-gradient-to-r from-cyan-500 to-blue-600">{loading ? 'Signing in...' : 'Login'}</button>
+                <button type="submit" disabled={loading} className="w-full py-3 rounded-full text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:opacity-90 disabled:opacity-50 transition-opacity">{loading ? 'Signing in...' : 'Login'}</button>
               </div>
             </form>
           ) : (
             <form onSubmit={submitSignup} className="space-y-3">
               <div>
                 <label className="text-xs text-slate-600 dark:text-slate-300">Full name</label>
-                <input value={name} onChange={e => setName(e.target.value)} className="w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500" />
+                <input 
+                  value={name} 
+                  onChange={e => {
+                    setName(e.target.value)
+                    if (touched.name) validateField('name', e.target.value)
+                  }}
+                  onBlur={() => {
+                    handleBlur('name')
+                    validateField('name', name)
+                  }}
+                  placeholder="John Doe"
+                  className={`w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 ${
+                    touched.name && fieldErrors.name 
+                      ? 'border-red-500 focus:ring-red-500' 
+                      : 'dark:border-slate-600 focus:ring-cyan-500'
+                  } focus:outline-none focus:ring-2`}
+                />
+                <FieldError error={fieldErrors.name} touched={touched.name} />
               </div>
               <div>
                 <label className="text-xs text-slate-600 dark:text-slate-300">Email</label>
-                <input type="email" value={semail} onChange={e => setSemail(e.target.value)} className="w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500" />
+                <input 
+                  type="email" 
+                  value={semail} 
+                  onChange={e => {
+                    setSemail(e.target.value)
+                    if (touched.email) validateField('email', e.target.value)
+                  }}
+                  onBlur={() => {
+                    handleBlur('email')
+                    validateField('email', semail)
+                  }}
+                  placeholder="you@example.com"
+                  className={`w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 ${
+                    touched.email && fieldErrors.email 
+                      ? 'border-red-500 focus:ring-red-500' 
+                      : 'dark:border-slate-600 focus:ring-cyan-500'
+                  } focus:outline-none focus:ring-2`}
+                />
+                <FieldError error={fieldErrors.email} touched={touched.email} />
               </div>
               <div>
                 <label className="text-xs text-slate-600 dark:text-slate-300">Phone Number</label>
@@ -176,15 +360,29 @@ export default function AuthPage({ initialTab = 'login', onSuccess, onClose }: P
                   <input
                     type="tel"
                     value={phone}
-                    onChange={e => setPhone(e.target.value)}
+                    onChange={e => {
+                      // Only allow digits
+                      const value = e.target.value.replace(/\D/g, '')
+                      setPhone(value)
+                      if (touched.phone) validateField('phone', value)
+                    }}
+                    onBlur={() => {
+                      handleBlur('phone')
+                      validateField('phone', phone)
+                    }}
                     placeholder="Phone number"
-                    className="flex-1 h-[48px] px-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500"
+                    className={`flex-1 h-[48px] px-3 rounded-md border bg-white dark:bg-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 ${
+                      touched.phone && fieldErrors.phone 
+                        ? 'border-red-500 focus:ring-red-500' 
+                        : 'dark:border-slate-600 focus:ring-cyan-500'
+                    } focus:outline-none focus:ring-2`}
                   />
                 </div>
+                <FieldError error={fieldErrors.phone} touched={touched.phone} />
               </div>
               <div>
                 <label className="text-xs text-slate-600 dark:text-slate-300">Role</label>
-                <select value={role} onChange={e => setRole(e.target.value as any)} className="w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100">
+                <select value={role} onChange={e => setRole(e.target.value as any)} className="w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500">
                   <option value="patient">Patient</option>
                   <option value="caretaker">Caretaker</option>
                   <option value="doctor">Doctor</option>
@@ -192,10 +390,51 @@ export default function AuthPage({ initialTab = 'login', onSuccess, onClose }: P
               </div>
               <div>
                 <label className="text-xs text-slate-600 dark:text-slate-300">Password</label>
-                <input type="password" value={spassword} onChange={e => setSPassword(e.target.value)} className="w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:border-slate-600 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500" />
+                <input 
+                  type="password" 
+                  value={spassword} 
+                  onChange={e => {
+                    setSPassword(e.target.value)
+                    if (touched.password) validateField('password', e.target.value)
+                  }}
+                  onBlur={() => {
+                    handleBlur('password')
+                    validateField('password', spassword)
+                  }}
+                  placeholder="Min 8 chars, uppercase, lowercase, number"
+                  className={`w-full mt-1 p-3 rounded-md border bg-white dark:bg-slate-700 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 ${
+                    touched.password && fieldErrors.password 
+                      ? 'border-red-500 focus:ring-red-500' 
+                      : 'dark:border-slate-600 focus:ring-cyan-500'
+                  } focus:outline-none focus:ring-2`}
+                />
+                <FieldError error={fieldErrors.password} touched={touched.password} />
+                
+                {/* Password strength indicator */}
+                {spassword && (
+                  <div className="mt-2">
+                    <div className="flex gap-1 mb-1">
+                      {[1, 2, 3, 4, 5].map((level) => (
+                        <div 
+                          key={level}
+                          className={`h-1 flex-1 rounded-full ${
+                            level <= passwordStrength.strength ? passwordStrength.color : 'bg-slate-200 dark:bg-slate-600'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <p className={`text-xs ${
+                      passwordStrength.strength <= 2 ? 'text-red-500' :
+                      passwordStrength.strength <= 3 ? 'text-yellow-600' :
+                      passwordStrength.strength <= 4 ? 'text-blue-500' : 'text-green-500'
+                    }`}>
+                      Password strength: {passwordStrength.label}
+                    </p>
+                  </div>
+                )}
               </div>
               <div>
-                <button type="submit" disabled={loading} className="w-full py-3 rounded-full text-white bg-gradient-to-r from-cyan-500 to-blue-600">{loading ? 'Creating...' : 'Create account'}</button>
+                <button type="submit" disabled={loading} className="w-full py-3 rounded-full text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:opacity-90 disabled:opacity-50 transition-opacity">{loading ? 'Creating...' : 'Create account'}</button>
               </div>
             </form>
           )}

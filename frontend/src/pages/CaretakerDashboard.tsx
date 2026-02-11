@@ -1,40 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
+import React, { useMemo } from 'react'
 import { ClockIcon, BoxIcon, PillIcon, WarningIcon, HomeIcon } from '../components/Icons'
+import { useCaretakerOverview } from '../hooks/useApi'
 
 type Props = {
   user: any
 }
 
 export default function CaretakerDashboard({ user }: Props) {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [overview, setOverview] = useState<any>(null)
-
-  const API_BASE = (import.meta as any).env?.VITE_API_URL
-    ?? (import.meta as any).env?.VITE_API_BASE_URL
-    ?? 'http://localhost:8080'
-
-  useEffect(() => {
-    let active = true
-    const fetchOverview = async () => {
-      if (!user?.token) return
-      setLoading(true)
-      setError(null)
-      try {
-        const headers = { Authorization: `Bearer ${user.token}` }
-        const response = await axios.get(`${API_BASE}/api/dashboard/caretaker/overview`, { headers })
-        if (active) setOverview(response.data)
-      } catch (err: any) {
-        if (active) setError(err?.response?.data?.message || 'Failed to load caretaker data')
-      } finally {
-        if (active) setLoading(false)
-      }
-    }
-
-    fetchOverview()
-    return () => { active = false }
-  }, [user, API_BASE])
+  // Use cached data - loads instantly after first fetch, refreshes in background
+  const { data: overview, isLoading: loading, error: queryError } = useCaretakerOverview(user?.token)
+  const error = queryError ? (queryError as any)?.response?.data?.message || 'Failed to load caretaker data' : null
 
   const summary = overview?.summary || { patientCount: 0, dosesToday: 0, pendingToday: 0, avgAdherence: 0 }
   const patients = overview?.patients || []

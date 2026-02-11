@@ -8,6 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.56.2",
     "axios": "^1.4.0",
     "chart.js": "^4.4.0",
     "react": "^18.2.0",

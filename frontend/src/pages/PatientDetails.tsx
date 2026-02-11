@@ -30,33 +30,72 @@ export default function PatientDetails({ user, onComplete }: Props) {
     e.preventDefault()
     setError(null)
 
+    // Validation
     if (!formData.deviceId.trim()) {
       setError('Device ID is required')
+      return
+    }
+
+    if (formData.deviceId.trim().length < 3) {
+      setError('Device ID must be at least 3 characters long')
+      return
+    }
+
+    if (formData.slotCount < 1 || formData.slotCount > 10) {
+      setError('Number of slots must be between 1 and 10')
       return
     }
 
     setLoading(true)
     try {
       const headers = getAuthHeaders()
+
+      if (!headers.Authorization) {
+        setError('Authentication token missing. Please log in again.')
+        setLoading(false)
+        return
+      }
       
+      // Create or update device FIRST (this is required)
+      const deviceResponse = await axios.post(`${API_BASE}/api/dashboard/device`, {
+        deviceId: formData.deviceId.trim(),
+        timezone: formData.timezone,
+        slotCount: parseInt(formData.slotCount.toString()) || 4,
+      }, { headers })
+
+      if (!deviceResponse.data) {
+        throw new Error('Device creation failed - no response received')
+      }
+
       // Update patient profile with medical details
-      await axios.patch(`${API_BASE}/api/dashboard/profile`, {
+      const profileResponse = await axios.patch(`${API_BASE}/api/dashboard/profile`, {
         allergies: formData.allergies.split(',').map(a => a.trim()).filter(a => a),
         illnesses: formData.illnesses.split(',').map(i => i.trim()).filter(i => i),
         otherNotes: formData.otherNotes,
       }, { headers })
 
-      // Create or update device
-      await axios.post(`${API_BASE}/api/dashboard/device`, {
-        deviceId: formData.deviceId,
-        timezone: formData.timezone,
-        slotCount: formData.slotCount,
-      }, { headers })
+      if (!profileResponse.data) {
+        throw new Error('Profile update failed - no response received')
+      }
 
+      // If both succeed, call onComplete to redirect
+      setLoading(false)
       onComplete()
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Failed to save details')
-    } finally {
+      console.error('Error saving patient details:', err)
+      let errorMsg = 'Failed to save details. Please try again.'
+      
+      if (err?.response?.status === 401) {
+        errorMsg = 'Your session has expired. Please log in again.'
+      } else if (err?.response?.status === 400) {
+        errorMsg = err?.response?.data?.message || 'Invalid input. Please check your data.'
+      } else if (err?.response?.data?.message) {
+        errorMsg = err.response.data.message
+      } else if (err?.message) {
+        errorMsg = err.message
+      }
+      
+      setError(errorMsg)
       setLoading(false)
     }
   }

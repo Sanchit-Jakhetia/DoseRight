@@ -17,7 +17,7 @@ interface ICaretakerLink {
 
 export interface IPatient extends Document {
   userId: Types.ObjectId;
-  deviceId: Types.ObjectId;
+  deviceId?: Types.ObjectId;
   medicalProfile?: {
     illnesses?: IIllness[];
     allergies?: string[];
@@ -65,8 +65,8 @@ const patientSchema = new Schema<IPatient>(
     deviceId: {
       type: Schema.Types.ObjectId,
       ref: 'Device',
-      required: true,
-      unique: true,
+      required: false,
+      sparse: true,
     },
 
     medicalProfile: {

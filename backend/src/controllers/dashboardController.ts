@@ -955,9 +955,19 @@ export const updateProfile = async (
       return;
     }
 
-    if (name) user.name = name;
-    if (phone !== undefined) user.phone = phone;
-    await user.save();
+    let userUpdated = false;
+    if (name) {
+      user.name = name;
+      userUpdated = true;
+    }
+    if (phone !== undefined) {
+      user.phone = phone;
+      userUpdated = true;
+    }
+    
+    if (userUpdated) {
+      await user.save();
+    }
 
     // Update or create patient medical profile
     let patient = await Patient.findOne({ userId: req.userId });
@@ -984,8 +994,10 @@ export const updateProfile = async (
     }
 
     // Update medical profile fields
+    let profileUpdated = false;
     if (allergies !== undefined) {
       patient.medicalProfile.allergies = allergies;
+      profileUpdated = true;
     }
     
     if (illnesses !== undefined) {
@@ -994,13 +1006,17 @@ export const updateProfile = async (
         name,
         status: 'ongoing',
       }));
+      profileUpdated = true;
     }
     
     if (otherNotes !== undefined) {
       patient.medicalProfile.otherNotes = otherNotes;
+      profileUpdated = true;
     }
 
-    await patient.save();
+    if (profileUpdated) {
+      await patient.save();
+    }
 
     res.status(200).json({ 
       message: 'Profile updated successfully',
@@ -1202,48 +1218,61 @@ export const createDevice = async (
   try {
     const { deviceId, timezone, slotCount } = req.body;
 
-    if (!deviceId) {
-      res.status(400).json({ message: 'Device ID is required' });
+    if (!deviceId || typeof deviceId !== 'string' || !deviceId.trim()) {
+      res.status(400).json({ message: 'Device ID is required and must be a valid string' });
       return;
     }
 
-    // Find or create device
-    let device = await Device.findOne({ deviceId });
-    
-    if (!device) {
-      device = new Device({
-        deviceId,
-        timezone: timezone || 'UTC',
-        slotCount: slotCount || 4,
-        batteryLevel: 100,
-        wifiConnected: true,
-      });
-      await device.save();
+    if (!req.userId) {
+      res.status(401).json({ message: 'User not authenticated' });
+      return;
     }
 
-    // Link device to patient
-    const patient = await Patient.findOne({ userId: req.userId });
+    // First, ensure patient exists for this user
+    let patient = await Patient.findOne({ userId: req.userId });
     
-    if (patient) {
-      patient.deviceId = device._id;
-      await patient.save();
-    } else {
-      // Create patient with device if doesn't exist
-      const newPatient = new Patient({
+    if (!patient) {
+      // Create patient profile if it doesn't exist
+      patient = new Patient({
         userId: req.userId,
-        deviceId: device._id,
         medicalProfile: {
           allergies: [],
           illnesses: [],
           otherNotes: '',
         },
       });
-      await newPatient.save();
+      await patient.save();
     }
+
+    // Now find or create device with the patient ID
+    let device = await Device.findOne({ deviceId: deviceId.trim() });
+    
+    if (!device) {
+      device = new Device({
+        deviceId: deviceId.trim(),
+        patientId: patient._id,
+        timezone: timezone || 'UTC',
+        slotCount: parseInt(slotCount) || 4,
+        batteryLevel: 100,
+        wifiConnected: false,
+      });
+      await device.save();
+    } else {
+      // If device already exists, link it to the patient if not already linked
+      if (!device.patientId || device.patientId.toString() !== patient._id.toString()) {
+        device.patientId = patient._id;
+        await device.save();
+      }
+    }
+
+    // Link device to patient
+    patient.deviceId = device._id;
+    await patient.save();
 
     res.status(200).json({
       message: 'Device created/linked successfully',
       device: {
+        id: device._id,
         deviceId: device.deviceId,
         timezone: device.timezone,
         slotCount: device.slotCount,
@@ -1251,7 +1280,7 @@ export const createDevice = async (
     });
   } catch (error) {
     console.error('Create device error:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    res.status(500).json({ message: 'Failed to create/link device. Please try again.' });
   }
 };
 

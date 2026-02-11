@@ -8,6 +8,22 @@ import CaretakerDashboard from './pages/CaretakerDashboard'
 import DoctorDashboard from './pages/DoctorDashboard'
 import AdminDashboard from './pages/AdminDashboard'
 import { HomeIcon, PlusIcon, ClockIcon, BoxIcon, PillIcon, EditIcon, TrashIcon, WarningIcon, SunIcon, MoonIcon, UserIcon } from './components/Icons'
+import { 
+  useMedicines, 
+  useSchedule, 
+  useAdherence, 
+  useSummary, 
+  useProfile, 
+  useHistory,
+  useMarkDose,
+  useAddMedicine,
+  useUpdateMedicine,
+  useRefillMedicine,
+  useUpdateProfile,
+  usePrefetchDashboard,
+  useInvalidateAll,
+  useRefreshDashboard,
+} from './hooks/useApi'
 
 type Medicine = {
   id: number
@@ -33,25 +49,43 @@ export default function App() {
     }
   }
 
-  const [medicines, setMedicines] = useState<Medicine[]>([])
-  const [schedule, setSchedule] = useState<Medicine[]>([])
-  const [adherence, setAdherence] = useState<any>(null)
-  const [summary, setSummary] = useState<any>(null)
+  const [user, setUser] = useState<any>(null)
+  
+  // Use cached data hooks - data loads instantly from cache, refreshes in background
+  const { data: medicines = [] } = useMedicines(user?.token)
+  const { data: schedule = [] } = useSchedule(user?.token)
+  const { data: adherence = null } = useAdherence(user?.token)
+  const { data: summary = null } = useSummary(user?.token)
+  const { data: profileData = null } = useProfile(user?.token)
+  
+  // History is loaded on-demand when panel is opened
+  const [showHistory, setShowHistory] = useState(false)
+  const { data: historyData, refetch: refetchHistory } = useHistory(user?.token, showHistory)
+  
+  // Mutations with automatic cache invalidation
+  const markDoseMutation = useMarkDose(user?.token)
+  const addMedicineMutation = useAddMedicine(user?.token)
+  const updateMedicineMutation = useUpdateMedicine(user?.token)
+  const refillMedicineMutation = useRefillMedicine(user?.token)
+  const updateProfileMutation = useUpdateProfile(user?.token)
+  
+  // Prefetch helper for login
+  const prefetchDashboard = usePrefetchDashboard(user?.token)
+  const invalidateAll = useInvalidateAll()
+  const refreshDashboard = useRefreshDashboard()
+  
   const [showLogin, setShowLogin] = useState(false)
   const [showSignup, setShowSignup] = useState(false)
-  const [user, setUser] = useState<any>(null)
   const [showPatientDetails, setShowPatientDetails] = useState(false)
   const [newPatient, setNewPatient] = useState<any>(null)
   const [route, setRoute] = useState<string>(() => window.location.pathname || '/')
   const [confirmAction, setConfirmAction] = useState<any>(null)
   const [showAddMedicine, setShowAddMedicine] = useState(false)
   const [editingMedicineId, setEditingMedicineId] = useState<string | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
-  const [historyData, setHistoryData] = useState<any>(null)
   const [showRefill, setShowRefill] = useState(false)
-  const [refillMedicines, setRefillMedicines] = useState<any[]>([])
+  // refillMedicines now uses the cached `medicines` data from the hook
   const [showProfile, setShowProfile] = useState(false)
-  const [profileData, setProfileData] = useState<any>(null)
+  // profileData now comes from the useProfile hook
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileForm, setProfileForm] = useState({
     name: '',
@@ -104,32 +138,6 @@ export default function App() {
     return headers
   }
 
-  const fetchDashboardData = () => {
-    if (!user) return
-
-    const headers = getAuthHeaders()
-    
-    axios.get(`${API_BASE}/api/dashboard/medicines`, { headers })
-      .then(r => setMedicines(Array.isArray(r.data) ? r.data : []))
-      .catch(() => setMedicines([]))
-
-    axios.get(`${API_BASE}/api/dashboard/schedule`, { headers })
-      .then(r => setSchedule(Array.isArray(r.data) ? r.data : []))
-      .catch(() => setSchedule([]))
-
-    axios.get(`${API_BASE}/api/dashboard/adherence`, { headers })
-      .then(r => setAdherence(r.data ?? null))
-      .catch(() => setAdherence(null))
-
-    axios.get(`${API_BASE}/api/dashboard/summary`, { headers })
-      .then(r => setSummary(r.data ?? null))
-      .catch(() => setSummary(null))
-
-    axios.get(`${API_BASE}/api/dashboard/profile`, { headers })
-      .then(r => setProfileData(r.data ?? null))
-      .catch(() => setProfileData(null))
-  }
-
   const handleMarkDose = (doseId: string, dose: any, action: 'taken' | 'missed') => {
     // Show confirmation dialog with action type
     setConfirmAction({ doseId, dose, action })
@@ -139,14 +147,12 @@ export default function App() {
     if (!confirmAction) return
     
     try {
-      const headers = getAuthHeaders()
-      const endpoint = confirmAction.action === 'taken' 
-        ? `${API_BASE}/api/dashboard/doses/${confirmAction.doseId}/mark-taken`
-        : `${API_BASE}/api/dashboard/doses/${confirmAction.doseId}/mark-missed`
-      
-      await axios.patch(endpoint, {}, { headers })
+      await markDoseMutation.mutateAsync({
+        doseId: confirmAction.doseId,
+        action: confirmAction.action,
+      })
       setConfirmAction(null)
-      fetchDashboardData() // Refresh data
+      // Cache is automatically invalidated by the mutation
     } catch (error: any) {
       const actionText = confirmAction.action === 'taken' ? 'mark dose as taken' : 'mark dose as missed'
       alert(error?.response?.data?.message || `Failed to ${actionText}`)
@@ -159,12 +165,11 @@ export default function App() {
     if (!amount || isNaN(Number(amount))) return
 
     try {
-      const headers = getAuthHeaders()
-      await axios.patch(`${API_BASE}/api/dashboard/medications/${medicationPlanId}/refill`, 
-        { amount: Number(amount) }, 
-        { headers }
-      )
-      fetchDashboardData() // Refresh data
+      await refillMedicineMutation.mutateAsync({
+        medicationId: medicationPlanId,
+        amount: Number(amount),
+      })
+      // Cache is automatically invalidated by the mutation
       alert('Medication refilled successfully!')
     } catch (error: any) {
       alert(error?.response?.data?.message || 'Failed to refill medication')
@@ -175,8 +180,6 @@ export default function App() {
     e.preventDefault()
     
     try {
-      const headers = getAuthHeaders()
-      
       // Prepare data for backend
       const medicineData = {
         medicationName: addMedicineForm.medicationName,
@@ -196,19 +199,21 @@ export default function App() {
       }
       
       if (editingMedicineId) {
-        await axios.patch(`${API_BASE}/api/dashboard/medicines/${editingMedicineId}`, {
-          ...medicineData,
-          stockRemaining: Number(addMedicineForm.stockRemaining),
-        }, { headers })
+        await updateMedicineMutation.mutateAsync({
+          id: editingMedicineId,
+          data: {
+            ...medicineData,
+            stockRemaining: Number(addMedicineForm.stockRemaining),
+          },
+        })
       } else {
-        await axios.post(`${API_BASE}/api/dashboard/medicines`, medicineData, { headers })
+        await addMedicineMutation.mutateAsync(medicineData)
       }
 
-      // Reset form and close modal
+      // Reset form and close modal - cache is automatically invalidated
       resetMedicineForm()
       setShowAddMedicine(false)
       setEditingMedicineId(null)
-      fetchDashboardData()
       alert(editingMedicineId ? 'Medicine updated successfully!' : 'Medicine added successfully!')
     } catch (error: any) {
       alert(error?.response?.data?.message || (editingMedicineId ? 'Failed to update medicine' : 'Failed to add medicine'))
@@ -239,40 +244,21 @@ export default function App() {
 
   const fetchHistory = async () => {
     if (!user) return
-    
-    try {
-      const headers = getAuthHeaders()
-      const response = await axios.get(`${API_BASE}/api/dashboard/history`, { headers })
-      setHistoryData(response.data)
-      setShowHistory(true)
-    } catch (error: any) {
-      alert(error?.response?.data?.message || 'Failed to fetch history')
-    }
+    setShowHistory(true)
+    // Data will be fetched by the useHistory hook when showHistory becomes true
+    refetchHistory()
   }
 
   const openRefillPanel = async () => {
     if (!user) return
-    
-    try {
-      const headers = getAuthHeaders()
-      const response = await axios.get(`${API_BASE}/api/dashboard/medicines`, { headers })
-      setRefillMedicines(Array.isArray(response.data) ? response.data : [])
-      setShowRefill(true)
-    } catch (error: any) {
-      alert(error?.response?.data?.message || 'Failed to fetch medicines')
-    }
+    // Use cached medicines data from the hook
+    setShowRefill(true)
   }
 
   const handleQuickRefill = async (medicationId: string, amount: number) => {
     try {
-      const headers = getAuthHeaders()
-      await axios.patch(`${API_BASE}/api/dashboard/medications/${medicationId}/refill`, 
-        { amount }, 
-        { headers }
-      )
-      // Refresh the refill panel
-      openRefillPanel()
-      fetchDashboardData()
+      await refillMedicineMutation.mutateAsync({ medicationId, amount })
+      // Cache is automatically invalidated by the mutation
     } catch (error: any) {
       alert(error?.response?.data?.message || 'Failed to refill medication')
     }
@@ -281,45 +267,37 @@ export default function App() {
   const openProfilePanel = async () => {
     if (!user) return
     
-    try {
-      const headers = getAuthHeaders()
-      const response = await axios.get(`${API_BASE}/api/dashboard/profile`, { headers })
-      setProfileData(response.data)
-      
-      // Populate form with current data
+    // Use cached profile data from the hook
+    if (profileData) {
       setProfileForm({
-        name: response.data.user?.name || '',
-        email: response.data.user?.email || '',
-        phone: response.data.user?.phone || '',
-        allergies: response.data.patient?.medicalProfile?.allergies?.join(', ') || '',
-        illnesses: response.data.patient?.medicalProfile?.illnesses?.map((i: any) => i.name).join(', ') || '',
-        otherNotes: response.data.patient?.medicalProfile?.otherNotes || '',
+        name: profileData.user?.name || '',
+        email: profileData.user?.email || '',
+        phone: profileData.user?.phone || '',
+        allergies: profileData.patient?.medicalProfile?.allergies?.join(', ') || '',
+        illnesses: profileData.patient?.medicalProfile?.illnesses?.map((i: any) => i.name).join(', ') || '',
+        otherNotes: profileData.patient?.medicalProfile?.otherNotes || '',
       })
-      
-      setShowProfile(true)
-      setEditingProfile(false)
-    } catch (error: any) {
-      alert(error?.response?.data?.message || 'Failed to fetch profile')
     }
+    
+    setShowProfile(true)
+    setEditingProfile(false)
   }
 
   const handleUpdateProfile = async () => {
     if (!user) return
     
     try {
-      const headers = getAuthHeaders()
-      await axios.patch(`${API_BASE}/api/dashboard/profile`, {
+      await updateProfileMutation.mutateAsync({
         name: profileForm.name,
         phone: profileForm.phone,
         allergies: profileForm.allergies.split(',').map(a => a.trim()).filter(a => a),
         illnesses: profileForm.illnesses.split(',').map(i => i.trim()).filter(i => i),
         otherNotes: profileForm.otherNotes,
-      }, { headers })
+      })
       
       alert('Profile updated successfully!')
       setEditingProfile(false)
-      // Refresh profile data
-      openProfilePanel()
+      // Cache is automatically invalidated by the mutation
     } catch (error: any) {
       alert(error?.response?.data?.message || 'Failed to update profile')
     }
@@ -455,9 +433,7 @@ export default function App() {
     }
   }, [route, user])
 
-  useEffect(() => {
-    fetchDashboardData()
-  }, [user])
+  // Data is now automatically fetched by the hooks when user.token is available
 
   // On mount, try to read persisted auth and token
   useEffect(() => {
@@ -478,11 +454,16 @@ export default function App() {
         <PatientDetails 
           user={newPatient}
           onComplete={() => {
-            setUser(newPatient)
-            localStorage.setItem('auth', JSON.stringify(newPatient))
+            // Ensure user is properly set with token
+            const userToSet = { ...newPatient }
+            setUser(userToSet)
+            localStorage.setItem('auth', JSON.stringify(userToSet))
             setShowPatientDetails(false)
             setNewPatient(null)
-            navigate('/')
+            // Navigate to dashboard after state is updated
+            setTimeout(() => {
+              navigate('/')
+            }, 100)
           }}
         />
       ) : (route === '/login' || route === '/signup') ? (
@@ -545,7 +526,7 @@ export default function App() {
             {theme === 'dark' ? <SunIcon className="w-5 h-5 text-yellow-400"/> : <MoonIcon className="w-5 h-5 text-slate-600"/>}
           </button>
           {user ? (
-            <button onClick={() => { setUser(null); localStorage.removeItem('auth'); navigate('/') }} className="ml-2 text-sm text-slate-600 hover:text-red-600 border border-transparent hover:border-red-100 px-3 py-1 rounded">Logout</button>
+            <button onClick={() => { invalidateAll(); setUser(null); localStorage.removeItem('auth'); navigate('/') }} className="ml-2 text-sm text-slate-600 hover:text-red-600 border border-transparent hover:border-red-100 px-3 py-1 rounded">Logout</button>
           ) : null}
         </div>
       </header>
@@ -1060,9 +1041,9 @@ export default function App() {
             </div>
             
             <div className="p-6 overflow-y-auto flex-1">
-              {refillMedicines.length > 0 ? (
+              {medicines.length > 0 ? (
                 <div className="space-y-4">
-                  {refillMedicines.map((med: any) => {
+                  {medicines.map((med: any) => {
                     const remaining = med.stock?.remaining || 0
                     const totalLoaded = med.stock?.totalLoaded || 0
                     const percentage = totalLoaded > 0 ? (remaining / totalLoaded) * 100 : 0
