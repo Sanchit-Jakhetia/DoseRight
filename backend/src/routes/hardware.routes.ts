@@ -6,7 +6,11 @@ const hardwareRouter = Router();
 
 const isHardwareTestMode = process.env.HARDWARE_TEST_MODE === 'true';
 const DISPENSED_RETRY_MINUTES = 5;
-const UPCOMING_GRACE_MINUTES = 30;
+// Grace period for missed dose marking (doses older than this become "missed")
+const MISSED_GRACE_MINUTES = 5;
+// How far in the past to include pending/dispensed doses for device display
+// This allows the device to still see doses that just passed their time
+const PAST_DOSE_WINDOW_MINUTES = 5;
 
 // Apply device authentication to all routes
 hardwareRouter.use(authDevice);
@@ -271,7 +275,10 @@ hardwareRouter.get('/upcoming', async (req: Request, res: Response): Promise<voi
     windowEnd.setDate(windowEnd.getDate() + 1);
 
     const dispensedRetryAt = new Date(now.getTime() - DISPENSED_RETRY_MINUTES * 60 * 1000);
-    const graceWindowStart = new Date(now.getTime() - UPCOMING_GRACE_MINUTES * 60 * 1000);
+    // For marking doses as missed - doses older than this window become missed
+    const missedCutoff = new Date(now.getTime() - MISSED_GRACE_MINUTES * 60 * 1000);
+    // For including past doses in response - only include recent past doses
+    const pastDoseWindow = new Date(now.getTime() - PAST_DOSE_WINDOW_MINUTES * 60 * 1000);
 
     await DoseLog.updateMany(
       {
@@ -284,11 +291,12 @@ hardwareRouter.get('/upcoming', async (req: Request, res: Response): Promise<voi
       }
     ).exec();
 
+    // Mark doses as missed if they're older than the grace period and still pending/dispensed
     await DoseLog.updateMany(
       {
         deviceId: device._id,
         status: { $in: ['pending', 'dispensed'] },
-        scheduledAt: { $lte: graceWindowStart },
+        scheduledAt: { $lte: missedCutoff },
       },
       {
         $set: { status: 'missed' },
@@ -302,10 +310,11 @@ hardwareRouter.get('/upcoming', async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Query DoseLogs in the window to avoid duplicates and include doseId
+    // Query DoseLogs: from past dose window to future window end
+    // This includes recent past doses (within 5 min) and future doses
     const doseLogs = await DoseLog.find({
       deviceId: device._id,
-      scheduledAt: { $gte: graceWindowStart, $lt: windowEnd },
+      scheduledAt: { $gte: pastDoseWindow, $lt: windowEnd },
     })
       .populate('medicationPlanId')
       .lean()
@@ -317,12 +326,18 @@ hardwareRouter.get('/upcoming', async (req: Request, res: Response): Promise<voi
     for (const log of doseLogs as any[]) {
       const plan = log.medicationPlanId as any;
       const scheduledAt = new Date(log.scheduledAt);
-      if (scheduledAt < graceWindowStart) {
+      
+      // Skip doses outside our window
+      if (scheduledAt < pastDoseWindow) {
         continue;
       }
+      
       const key = `${plan?._id?.toString() || 'unknown'}_${scheduledAt.getTime()}`;
       doseLogKeySet.add(key);
 
+      // Only include pending or dispensed doses
+      // For PAST doses: only include if within the past dose window (already filtered above)
+      // For FUTURE doses: include all pending/dispensed
       if (log.status === 'pending' || log.status === 'dispensed') {
         upcomingItems.push({
           scheduledAt,
@@ -379,7 +394,10 @@ hardwareRouter.get('/upcoming', async (req: Request, res: Response): Promise<voi
           const scheduledAt = new Date(schedule.date);
           scheduledAt.setHours(hours, minutes, 0, 0);
 
-          if (scheduledAt >= windowEnd || scheduledAt < graceWindowStart) {
+          // Only include if within our valid window:
+          // - Not too far in the future (windowEnd)
+          // - Not too far in the past (pastDoseWindow) - past doses older than 5 min are excluded
+          if (scheduledAt >= windowEnd || scheduledAt < pastDoseWindow) {
             continue;
           }
 
